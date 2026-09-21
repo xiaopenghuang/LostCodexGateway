@@ -2,11 +2,16 @@
 """把 tests/e2e/*.mjs 里写死的本机绝对路径改为从脚本位置推导。
 
 背景：这些 CDP 端到端脚本是开发期间在真实工作区里写的，私钥路径与截图输出目录
-都被写成了绝对路径（形如 `I:\\开发\\LostCodexGateway\\...`）。这些路径只在作者
-那台机器上成立，既不可移植，也把本地目录结构泄进了仓库。
+都被写成了绝对路径，只在作者那台机器上成立，既不可移植，也把本地目录结构
+泄进了仓库。
 
 做法：在读文件/写文件前注入一段基于 `import.meta.url` 的路径推导，并把绝对路径
 替换为推导出的变量。脚本是可重复运行的（幂等）：已经改过的文件不会被二次改写。
+
+**真实的前缀不在本文件里写死**（本脚本随仓库公开）：从本地映射表读取
+``.workbuddy-ai/redaction-map.local.json`` 的 ``e2e_source_prefix`` 字段，
+以及可选的 ``e2e_real_paths``（形如 ``[["<真实绝对路径>", "<替换表达式>"]]``）。
+缺失时只处理「已含 D:\\Tools / 已推导变量」之外的历史硬编码模式。
 
 用法：
     python scripts/redact-e2e-paths.py [--check]
@@ -15,12 +20,26 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 E2E = ROOT / "tests" / "e2e"
+LOCAL_MAP = ROOT / ".workbuddy-ai" / "redaction-map.local.json"
+
+# 从本地映射表读取真实前缀（不入库）
+SOURCE_PREFIX = ""
+EXTRA_PATHS: list[list[str]] = []
+if LOCAL_MAP.exists():
+    try:
+        _m = json.loads(LOCAL_MAP.read_text(encoding="utf-8"))
+        SOURCE_PREFIX = _m.get("e2e_source_prefix", "")
+        EXTRA_PATHS = _m.get("e2e_real_paths", [])
+    except (OSError, ValueError) as e:
+        print(f"⚠ 本地映射表读取失败（{e}）", file=sys.stderr)
 
 # 注入头：放在 import 语句之后，提供 __dirname / REPO_ROOT / FIXTURE_KEY / SHOT_DIR
 PRELUDE = '''
@@ -41,42 +60,50 @@ const SHOT_DIR = joinPath(REPO_ROOT, "docs", "screenshots");
 
 PRELUDE_MARKER = "路径推导（由 scripts/redact-e2e-paths.py 注入"
 
+
+def _esc_variants(prefix: str) -> list[str]:
+    """把真实前缀展开成不同转义层数的正则片段。
+
+    JS 字符串字面量里反斜杠层数不确定（`\\` / `\\\\` / `\\\\\\\\`），
+    所以逐层生成。空前缀时返回空列表。
+    """
+    if not prefix:
+        return []
+    # 把前缀里的单个反斜杠替换为「1~4 个反斜杠」的正则
+    out = []
+    for n in (4, 2, 1):
+        out.append(re.escape(prefix).replace(r"\\", "\\\\" * n))
+    return out
+
+
 # 写死路径 → 替换表达式
-# 注意匹配顺序：先长后短，避免把 `I:\\开发\\LostCodexGateway` 部分替换后残留。
-REPLACEMENTS: list[tuple[re.Pattern[str], str]] = [
-    # 4 层转义的 JS 字符串字面量（源码里写成 \\\\，即运行时为 \\）
-    (
-        re.compile(
-            r'"I:\\\\+开发\\\\+LostCodexGateway\\\\+tests\\\\+fixtures\\\\+ssh-server\\\\+keys\\\\+id_test_ed25519"'
+# 注意匹配顺序：先长后短，避免部分替换后残留。
+_prefixes = _esc_variants(SOURCE_PREFIX)
+_prefix_re = "(?:" + "|".join(_prefixes) + ")" if _prefixes else None
+
+REPLACEMENTS: list[tuple[re.Pattern[str], str]] = []
+
+if _prefix_re:
+    REPLACEMENTS += [
+        # 夹具私钥
+        (
+            re.compile(r'"' + _prefix_re + r'(?:\\\\|\\\\\\\\)*tests(?:\\\\|\\\\\\\\)*fixtures'
+                       r'(?:\\\\|\\\\\\\\)*ssh-server(?:\\\\|\\\\\\\\)*keys(?:\\\\|\\\\\\\\)*id_test_ed25519"'),
+            "FIXTURE_KEY",
         ),
-        "FIXTURE_KEY",
-    ),
-    (
-        re.compile(r'"I:\\\\+开发\\\\+LostCodexGateway\\\\+docs\\\\+screenshots"'),
-        "SHOT_DIR",
-    ),
-    # 2 层转义（运行时为单个反斜杠）——截图输出的 string + "\\file.png" 形式
-    (
-        re.compile(r'"I:\\\\开发\\\\LostCodexGateway\\\\docs\\\\screenshots"'),
-        "SHOT_DIR",
-    ),
-    # 裸字面量形式的兜底（单层/无转义）
-    (
-        re.compile(r'"I:\\(?:开发)\\LostCodexGateway\\tests\\fixtures\\ssh-server\\keys\\id_test_ed25519"'),
-        "FIXTURE_KEY",
-    ),
-    (
-        re.compile(r'"I:\\(?:开发)\\LostCodexGateway\\docs\\screenshots"'),
-        "SHOT_DIR",
-    ),
-    # 真实的 node 全局安装路径（与项目无关的本机环境细节）
-    (
-        re.compile(
-            r'"D:\\\\+Tools\\\\+nodejs\\\\+node_global\\\\+node_modules\\\\+@openai\\\\+codex\\\\+bin\\\\+codex\.exe"'
+        # 截图输出目录
+        (
+            re.compile(r'"' + _prefix_re + r'(?:\\\\|\\\\\\\\)*docs(?:\\\\|\\\\\\\\)*screenshots"'),
+            "SHOT_DIR",
         ),
-        'joinPath(REPO_ROOT, "codex.exe")',
-    ),
-]
+    ]
+
+# 由本地映射表提供的额外一对一替换（真实绝对路径 -> 表达式）
+for _real, _expr in EXTRA_PATHS:
+    if not _real or not _expr:
+        continue
+    for _v in _esc_variants(_real):
+        REPLACEMENTS.append((re.compile(r'"' + _v + r'"'), _expr))
 
 # node:path / node:url 的 import 若已存在，不重复注入
 IMPORT_ANCHOR = re.compile(r"^(import .+?;\s*)$", re.MULTILINE)

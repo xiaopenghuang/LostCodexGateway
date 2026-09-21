@@ -7,17 +7,45 @@
 
 同时给验收报告补上「IP 已脱敏」的声明。
 可重复运行：已处理的文件不会被二次改动。
+
+**为什么真实值不在这个脚本里**：本脚本随仓库公开，若把真实 IP / 端点
+写死在源码里，等于把刚脱敏掉的值又发布一次。因此真实值放在本地映射表
+`.workbuddy-ai/redaction-map.local.json`（已在 .gitignore 中），
+缺失时脚本会跳过「地址替换」但仍执行路径归一化与声明补全。
+
+本地映射表格式：
+    {
+      "ip":   [["<真实 IP>", "<文档段 IP>"], ...],
+      "host": [["<真实 host:port>", "实测环境"], ["<真实 host>", "实测环境"]]
+    }
 """
 import io
+import json
+import os
 
-# 1) 真实 IP -> 文档保留段（一对一，保证「相同/不同」的结论仍成立）
-IP_MAP = [
-    ("210.41.243.3", "203.0.113.47"),
-    ("223.85.246.143", "198.51.100.22"),
-    ("206.251.53.87", "198.51.100.88"),
-]
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LOCAL_MAP = os.path.join(ROOT, ".workbuddy-ai", "redaction-map.local.json")
+
+# 1) 真实 IP -> 文档段 IP（一对一，保证「相同/不同」的结论仍成立）
+#    真实值从本地映射表加载
+IP_MAP: list[tuple[str, str]] = []
+# 3) 真实 SSH 端点（IP + 非标准端口）-> 泛化措辞
+HOST_MAP: list[tuple[str, str]] = []
+
+if os.path.exists(LOCAL_MAP):
+    try:
+        _m = json.load(io.open(LOCAL_MAP, encoding="utf-8"))
+        IP_MAP = [tuple(x) for x in _m.get("ip", [])]
+        HOST_MAP = [tuple(x) for x in _m.get("host", [])]
+        print(f"已载入本地映射表：{len(IP_MAP)} 条 IP、{len(HOST_MAP)} 条端点")
+    except (OSError, ValueError) as e:
+        print(f"⚠ 本地映射表读取失败（{e}），本次跳过地址替换")
+else:
+    print(f"⚠ 未找到本地映射表 {LOCAL_MAP}，本次跳过地址替换")
+    print("  （地址替换已完成过一次，通常无需重跑；如需重放请先恢复该文件）")
 
 # 2) 本机盘符路径 -> 示意路径（顺序：长前缀优先）
+#    这类路径不含个人身份信息，但会泄露作者磁盘布局，故一并归一化。
 PATH_MAP = [
     ("G:" + "\\" * 2 + "VSCODE" + "\\" * 2 + "nodejs", "D:" + "\\" * 2 + "Tools" + "\\" * 2 + "nodejs"),
     ("G:" + "\\" * 2 + "VSCODE", "D:" + "\\" * 2 + "Tools"),
@@ -31,11 +59,7 @@ PATH_MAP = [
     ("G:" + "\\" + "Practical-tools", "D:" + "\\" + "Tools"),
 ]
 
-# 3) 真实 SSH 端点（IP + 非标准端口）-> 泛化措辞
-HOST_MAP = [
-    ("154.40.48.25:64824", "实测环境"),
-    ("154.40.48.25", "实测环境"),
-]
+# 3) 真实 SSH 端点的定义已上移至映射表加载处（HOST_MAP）
 
 DOCS = [
     "docs/acceptance-report.md",
