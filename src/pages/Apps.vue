@@ -243,7 +243,7 @@ async function doRestore() {
       </template>
 
       <h3>生成规则片段（不自动写入任何配置）</h3>
-      <div class="row">
+      <div class="row form">
         <label class="field">代理组名
           <input type="text" v-model="fragGroup" />
         </label>
@@ -262,14 +262,14 @@ async function doRestore() {
       </p>
 
       <h3>备份与回滚（仅本工具备份）</h3>
-      <div class="row">
+      <div class="row form">
         <label class="field">要备份的文件路径
           <input type="text" v-model="backupSrc" placeholder="…\profiles\xxx.yaml" style="min-width: 360px" />
         </label>
         <button class="btn secondary" @click="doBackup">备份</button>
       </div>
       <p v-if="backupPath" class="notice ok mono">已备份到 {{ backupPath }}</p>
-      <div class="row">
+      <div class="row form">
         <label class="field">回滚目标路径
           <input type="text" v-model="restorePath" style="min-width: 300px" />
         </label>

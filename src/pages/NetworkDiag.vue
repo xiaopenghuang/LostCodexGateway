@@ -206,7 +206,7 @@ function hopStyle(h: PathHop): DiagStatus {
         诊断参数
         <span v-if="report" class="status-pill info">耗时 {{ report.duration_ms }}ms</span>
       </h2>
-      <div class="row">
+      <div class="row form">
         <label class="field">Mihomo external-controller secret（可选，仅本次内存使用，不落盘）
           <input type="password" v-model="secret" placeholder="（有 secret 时填写以读取只读连接信息）" style="min-width: 300px" />
         </label>
@@ -280,7 +280,7 @@ function hopStyle(h: PathHop): DiagStatus {
     <!-- 2.4 诊断日志 -->
     <div class="card">
       <h2>诊断日志（脱敏）</h2>
-      <div class="row">
+      <div class="row form">
         <label class="field">级别
           <select v-model="logFilterLevel">
             <option value="all">全部</option>
@@ -318,7 +318,7 @@ function hopStyle(h: PathHop): DiagStatus {
         出口 IP 检测要求（需求文档 §3.2）：代理出口必须显式指定 SOCKS5 + 远端 DNS，
         绝不把服务器地址当已验证出口。
       </div>
-      <div class="row" style="margin-top: 12px">
+      <div class="row form" style="margin-top: 12px">
         <label class="field">预期出口 IP（空 = 不校验；填入后诊断会做匹配判定）
           <input type="text" v-model="expectedIp" placeholder="如 1.2.3.4" />
         </label>

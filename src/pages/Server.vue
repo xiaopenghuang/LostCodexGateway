@@ -73,7 +73,7 @@ async function doConfirm() {
 
     <div class="card">
       <h2>连接信息</h2>
-      <div class="row">
+      <div class="row form">
         <label class="field">目标服务器名称（可选）
           <input type="text" v-model="form.server_name" placeholder="我的 VPS" />
         </label>
@@ -89,7 +89,7 @@ async function doConfirm() {
       </div>
 
       <h3>本地出口</h3>
-      <div class="row">
+      <div class="row form">
         <label class="field narrow">本地 SOCKS 端口
           <input type="number" v-model.number="form.socks_port" min="1024" max="65535" />
         </label>

@@ -629,6 +629,20 @@ textarea {
   align-items: center;
 }
 
+/* 表单行：行内含 label.field（标签在上、控件在下）。
+ * align-items:center 是相对「标签+控件」整体居中的，会让按钮比输入框
+ * 高出约半个标签行（实测 14px），看起来像浮在标签旁边。
+ * 这类行必须改 flex-end，让按钮与输入框底边对齐。 */
+.row.form {
+  align-items: flex-end;
+}
+
+/* 表单行里的按钮需要补一点下边距，抵消 .row 的 baseline 视觉差，
+ * 让按钮底边与输入框底边严格齐平（输入框有 1px 边框）。 */
+.row.form > button.btn {
+  margin-bottom: 1px;
+}
+
 .kv {
   display: flex;
   justify-content: space-between;
