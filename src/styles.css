@@ -805,6 +805,19 @@ label.field {
   flex: 1 1 200px;
 }
 
+/* 窄字段（端口号、小数字等）：允许收缩到比默认下限更小。
+ * 注意 min-width 必须一起覆盖——只写 flex-basis 会被上面的
+ * min-width:200px 顶住，短字段仍占满 200px（真实踩过）。 */
+label.field.narrow {
+  flex: 0 1 132px;
+  min-width: 132px;
+}
+
+label.field.wide {
+  flex: 1 1 380px;
+  min-width: 320px;
+}
+
 label.field > input,
 label.field > select {
   font-weight: 400;
@@ -910,10 +923,27 @@ label.field > select {
   word-break: break-all;
   color: var(--log-text);
 }
+
+/* 每行是一整条日志：用 flex 让「时间戳」固定不换行，
+ * 消息部分独立成块，换行时自然悬挂缩进，不会顶到最左边。
+ * （此前 .t 与消息同处一个 inline 流，长消息续行会跑到第 0 列，
+ *   与上一行的正文对不齐，读起来像串行。） */
+.logbox .ln {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+}
 .logbox .t {
   color: var(--log-ts);
-  margin-right: var(--sp-2);
   user-select: none;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.logbox .msg {
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
 }
 .logbox .e {
   color: var(--err);
@@ -1034,6 +1064,32 @@ table.tbl tbody tr:hover {
   margin: var(--sp-4) 0 0;
 }
 
+/* 定列数变体：用于条目数已知且需要整齐排列的场景。
+ * auto-fit 在 1136px 下会排成 5+3 这种参差行，8 项用 4 列更整齐。 */
+.stat-grid.cols-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.stat-grid.cols-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.stat-grid.cols-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* 窄窗口下逐级降列，避免挤压 */
+@media (max-width: 1100px) {
+  .stat-grid.cols-4 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 900px) {
+  .stat-grid.cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stat-grid.cols-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 700px) {
+  .stat-grid.cols-4,
+  .stat-grid.cols-3,
+  .stat-grid.cols-2 { grid-template-columns: minmax(0, 1fr); }
+}
+
 .stat {
   background: var(--bg-input);
   border: 1px solid var(--bd-subtle);
@@ -1057,8 +1113,12 @@ table.tbl tbody tr:hover {
   font-weight: 500;
   color: var(--tx-1);
   letter-spacing: -0.01em;
-  word-break: break-all;
   line-height: 1.4;
+  /* 用 overflow-wrap 而非 break-all：break-all 会把 SOCKS5 断成
+   * "SOCK"+"S5" 这种读不懂的碎片。anywhere 只在实在放不下时才断，
+   * 且优先在词边界断行。 */
+  overflow-wrap: anywhere;
+  word-break: normal;
 }
 .stat-value.accent {
   color: var(--accent);

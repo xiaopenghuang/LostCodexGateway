@@ -17,6 +17,12 @@ export const store = reactive({
 });
 
 export async function initStore(): Promise<void> {
+  // 开发期「有数据状态」视觉检查：仅在 dev + 指定场景时生效，生产构建会被摇掉
+  if (import.meta.env.DEV && import.meta.env.VITE_LCFG_FIXTURE) {
+    const { applyFixture } = await import("../dev/apply-fixture");
+    applyFixture(import.meta.env.VITE_LCFG_FIXTURE);
+    return;
+  }
   try {
     store.snapshot = await invoke<GatewaySnapshot>("get_snapshot");
     store.sshEnv = await invoke<SshEnv>("detect_ssh_env");

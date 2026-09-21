@@ -35,7 +35,7 @@ async function doExport() {
 
     <div class="card">
       <h2>诊断概览</h2>
-      <div class="stat-grid">
+      <div class="stat-grid cols-3">
         <div class="stat">
           <span class="stat-label">当前状态</span>
           <span class="stat-value">{{ store.snapshot?.state ?? "—" }}</span>
@@ -72,11 +72,12 @@ async function doExport() {
         <span v-if="warnCount" class="status-pill warn">{{ warnCount }} 需注意</span>
       </h2>
       <div class="logbox">
-        <div v-for="(l, i) in logs" :key="i">
+        <div v-for="(l, i) in logs" :key="i" class="ln">
           <span class="t">{{ l.ts }}</span>
-          <span :class="l.level === 'error' ? 'e' : l.level === 'warn' ? 'w' : ''">
-            [{{ l.component }}] {{ l.message }}
-          </span>
+          <span
+            class="msg"
+            :class="l.level === 'error' ? 'e' : l.level === 'warn' ? 'w' : ''"
+          >[{{ l.component }}] {{ l.message }}</span>
         </div>
         <div v-if="logs.length === 0" class="muted">暂无日志。</div>
       </div>

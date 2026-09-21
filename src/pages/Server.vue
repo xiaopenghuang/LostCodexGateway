@@ -80,7 +80,7 @@ async function doConfirm() {
         <label class="field">主机地址
           <input type="text" v-model="form.host" placeholder="vps.example.com 或 IP" />
         </label>
-        <label class="field" style="flex: 0 1 130px">SSH 端口
+        <label class="field narrow">SSH 端口
           <input type="number" v-model.number="form.port" min="1" max="65535" />
         </label>
         <label class="field">用户名
@@ -90,7 +90,7 @@ async function doConfirm() {
 
       <h3>本地出口</h3>
       <div class="row">
-        <label class="field" style="flex: 0 1 200px">本地 SOCKS 端口
+        <label class="field narrow">本地 SOCKS 端口
           <input type="number" v-model.number="form.socks_port" min="1024" max="65535" />
         </label>
         <label class="field">系统 ssh.exe 路径
@@ -127,7 +127,7 @@ async function doConfirm() {
       </h2>
 
       <div v-if="hostKey && hostKey.known">
-        <div class="stat-grid">
+        <div class="stat-grid cols-2">
           <div class="stat">
             <span class="stat-label">密钥类型</span>
             <span class="stat-value">{{ hostKey.key_type }}</span>
@@ -146,7 +146,7 @@ async function doConfirm() {
             确认无误后再写入系统 known_hosts。
           </p>
         </div>
-        <div class="stat-grid">
+        <div class="stat-grid cols-2">
           <div class="stat">
             <span class="stat-label">密钥类型</span>
             <span class="stat-value">{{ hostKey.key_type }}</span>

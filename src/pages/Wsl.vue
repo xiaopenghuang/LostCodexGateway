@@ -89,7 +89,7 @@ const tunnelReady = () => store.snapshot?.state === "EGRESS_VERIFIED";
     <template v-if="det">
       <div class="card">
         <h2>检测结论</h2>
-        <div class="stat-grid">
+        <div class="stat-grid cols-4">
           <div class="stat">
             <span class="stat-label">wsl.exe</span>
             <span :class="['stat-value', det.wsl_exe_found ? 'ok' : 'err']">

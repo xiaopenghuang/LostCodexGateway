@@ -218,7 +218,7 @@ function hopStyle(h: PathHop): DiagStatus {
     <!-- 2.1 网络状态总览 -->
     <div class="card">
       <h2>网络状态总览</h2>
-      <div class="stat-grid">
+      <div class="stat-grid cols-4">
         <div v-for="o in overview" :key="o.label" class="stat">
           <span :class="['status-pill', statusClass(o.status)]">{{ o.label }}</span>
           <span class="stat-value dim" style="margin-top: 8px; font-family: var(--font-ui); font-size: var(--fs-base); line-height: 1.45">
@@ -300,9 +300,12 @@ function hopStyle(h: PathHop): DiagStatus {
         <span v-if="expectedMsg" class="muted mono">{{ expectedMsg }}</span>
       </div>
       <div class="logbox" style="max-height: 260px; margin-top: 10px">
-        <div v-for="e in filteredLogs" :key="e.id">
+        <div v-for="e in filteredLogs" :key="e.id" class="ln">
           <span class="t">{{ e.ts }}</span>
-          <span :class="e.level === 'error' ? 'e' : e.level === 'warn' ? 'w' : ''">[{{ e.key }}] {{ e.text }}</span>
+          <span
+            class="msg"
+            :class="e.level === 'error' ? 'e' : e.level === 'warn' ? 'w' : ''"
+          >[{{ e.key }}] {{ e.text }}</span>
         </div>
         <div v-if="filteredLogs.length === 0" class="muted">暂无日志（先点「开始诊断」）。</div>
       </div>
