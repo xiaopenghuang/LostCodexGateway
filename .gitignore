@@ -30,6 +30,8 @@ docs/m0-environment-report.json
 *.log
 npm-debug.log*
 *.tmp
+__pycache__/
+*.pyc
 
 # ---- 编辑器与系统 ----
 .vscode/
