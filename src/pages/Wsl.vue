@@ -57,13 +57,23 @@ const tunnelReady = () => store.snapshot?.state === "EGRESS_VERIFIED";
 
 <template>
   <div>
-    <div class="card">
-      <div class="row" style="justify-content: space-between">
-        <h2 style="margin: 0">WSL2 专项支持</h2>
-        <button class="btn" :disabled="busy" @click="doDetect">
-          {{ busy ? "检测中…" : "检测 WSL" }}
-        </button>
+    <div class="page-head">
+      <div>
+        <h1 class="page-title">WSL2</h1>
+        <p class="page-desc">探测 WSL 内能否真正连到本机网关，并生成只影响当前 shell 的注入命令。</p>
       </div>
+      <button class="btn" :disabled="busy" @click="doDetect">
+        {{ busy ? "检测中…" : "检测 WSL" }}
+      </button>
+    </div>
+
+    <div class="card">
+      <h2>
+        WSL2 专项支持
+        <span v-if="det" :class="['status-pill', det.gateway_reachable_from_wsl ? 'ok' : 'warn']">
+          {{ det.gateway_reachable_from_wsl ? "已实测可达" : "未验证" }}
+        </span>
+      </h2>
       <p class="muted">
         WSL2 内的进程<b>不继承</b> Windows 的进程级规则与环境变量，所以「Windows 上装了 Codex」
         不代表「WSL2 里的 Codex 也走网关」。本页只做<b>只读探测</b>：以「在 WSL 内真正建连成功」为唯一判据，
@@ -73,41 +83,50 @@ const tunnelReady = () => store.snapshot?.state === "EGRESS_VERIFIED";
         当前隧道状态为「{{ store.snapshot?.state ?? "未知" }}」。探测需要网关正在监听 SOCKS 端口，
         请先在「首页」连接成功后再检测。
       </p>
-      <p v-if="err" class="muted mono">{{ err }}</p>
+      <p v-if="err" class="notice err mono">{{ err }}</p>
     </div>
 
     <template v-if="det">
       <div class="card">
         <h2>检测结论</h2>
-        <div class="kv">
-          <span class="k">wsl.exe</span>
-          <span class="v">{{ det.wsl_exe_found ? "已找到" : "未找到" }}</span>
+        <div class="stat-grid">
+          <div class="stat">
+            <span class="stat-label">wsl.exe</span>
+            <span :class="['stat-value', det.wsl_exe_found ? 'ok' : 'err']">
+              {{ det.wsl_exe_found ? "已找到" : "未找到" }}
+            </span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Windows 侧 SOCKS 端口</span>
+            <span class="stat-value accent">127.0.0.1:{{ det.socks_port }}</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">WSL → 本网关</span>
+            <span :class="['stat-value', det.gateway_reachable_from_wsl ? 'ok' : 'err']">
+              {{ det.gateway_reachable_from_wsl ? "可达" : "不可达" }}
+            </span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">发行版数量</span>
+            <span class="stat-value">{{ det.distros.length }}</span>
+          </div>
         </div>
-        <div class="kv">
-          <span class="k">Windows 侧 SOCKS 端口</span>
-          <span class="v">127.0.0.1:{{ det.socks_port }}</span>
-        </div>
-        <div class="kv">
-          <span class="k">WSL 能否连到本网关</span>
-          <span :class="['status-pill', det.gateway_reachable_from_wsl ? 'ok' : 'warn']">
-            {{ det.gateway_reachable_from_wsl ? "可达（已实测建连）" : "不可达 / 未验证" }}
-          </span>
-        </div>
-        <div v-if="det.recommended_proxy" class="kv">
-          <span class="k">推荐代理地址</span>
-          <span class="v mono">{{ det.recommended_proxy }}</span>
+        <div v-if="det.recommended_proxy" class="readout" style="margin-top: 12px">
+          <div class="kv">
+            <span class="k">推荐代理地址</span>
+            <span class="v mono">{{ det.recommended_proxy }}</span>
+          </div>
         </div>
         <p class="notice">{{ det.note }}</p>
       </div>
 
       <div class="card">
-        <h2>发行版</h2>
-        <p v-if="det.distros.length === 0" class="muted">未检测到任何 WSL 发行版。</p>
-        <div
-          v-for="d in det.distros"
-          :key="d.name"
-          style="border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 10px"
-        >
+        <h2>
+          发行版
+          <span class="status-pill info">{{ det.distros.length }}</span>
+        </h2>
+        <p v-if="det.distros.length === 0" class="empty">未检测到任何 WSL 发行版。</p>
+        <div v-for="d in det.distros" :key="d.name" class="readout">
           <div class="row" style="justify-content: space-between">
             <b>{{ d.name }}{{ d.is_default ? "（默认）" : "" }}</b>
             <span :class="['status-pill', d.state.toLowerCase() === 'running' ? 'ok' : 'info']">
@@ -134,10 +153,10 @@ const tunnelReady = () => store.snapshot?.state === "EGRESS_VERIFIED";
 
       <div class="card">
         <h2>在 WSL 内使用网关</h2>
-        <p class="muted">
+        <div class="notice info">
           生成的命令<b>只影响你粘贴它的那个 shell 会话</b>：不写 <code>~/.bashrc</code>、
           不改 <code>/etc/environment</code>、不动 WSL 网络配置。
-        </p>
+        </div>
         <div class="row">
           <button
             class="btn secondary"
@@ -150,42 +169,62 @@ const tunnelReady = () => store.snapshot?.state === "EGRESS_VERIFIED";
             探测结果为不可达，已禁用（避免给出注定失败的指引）。
           </span>
         </div>
-        <p v-if="cmdErr" class="muted mono">{{ cmdErr }}</p>
+        <p v-if="cmdErr" class="notice err mono">{{ cmdErr }}</p>
 
         <template v-if="cmd">
           <h3>① 注入代理（一次性）</h3>
           <pre class="logbox">{{ cmd.inject_command }}</pre>
-          <button class="btn secondary" @click="copyText(cmd.inject_command, 'inject')">
-            {{ copied === "inject" ? "已复制" : "复制" }}
-          </button>
+          <div class="row end">
+            <button class="btn ghost sm" @click="copyText(cmd.inject_command, 'inject')">
+              {{ copied === "inject" ? "已复制" : "复制命令" }}
+            </button>
+          </div>
 
           <h3>② 自检（对比网关出口与本机出口）</h3>
           <pre class="logbox">{{ cmd.selfcheck_command }}</pre>
-          <button class="btn secondary" @click="copyText(cmd.selfcheck_command, 'check')">
-            {{ copied === "check" ? "已复制" : "复制" }}
-          </button>
+          <div class="row end">
+            <button class="btn ghost sm" @click="copyText(cmd.selfcheck_command, 'check')">
+              {{ copied === "check" ? "已复制" : "复制命令" }}
+            </button>
+          </div>
           <p class="muted">{{ cmd.note }}</p>
         </template>
       </div>
 
       <div class="card">
         <h2>为什么 NAT 模式下不可达</h2>
-        <ul class="muted" style="line-height: 1.9">
-          <li>
-            <b>NAT 模式（WSL2 默认）</b>：WSL 有独立虚拟网卡与 IP，它自己的
-            <code>127.0.0.1</code> 指向 WSL 自身，不是 Windows。而本工具的 SOCKS
-            只绑 Windows 的 <code>127.0.0.1</code>，因此 WSL 侧<b>默认连不上</b>。
-          </li>
-          <li>
-            <b>Mirrored 模式</b>：WSL 与 Windows 共享回环，<code>127.0.0.1</code>
-            直接互通。可在 <code>%USERPROFILE%\.wslconfig</code> 中设置
-            <code>networkingMode=mirrored</code> 后 <code>wsl --shutdown</code> 重启。
-          </li>
-          <li>
-            本工具<b>不代做需要管理员权限的端口转发</b>（如 <code>netsh interface
-            portproxy</code>），以免在用户不知情时改动系统网络配置。
-          </li>
-        </ul>
+        <div class="steps">
+          <div class="step">
+            <span class="step-mark err">N</span>
+            <div class="step-body">
+              <div class="step-label">NAT 模式（WSL2 默认）</div>
+              <div class="step-detail">
+                WSL 有独立虚拟网卡与 IP，它自己的 127.0.0.1 指向 WSL 自身，不是 Windows。
+                而本工具的 SOCKS 只绑 Windows 的 127.0.0.1，因此 WSL 侧默认连不上。
+              </div>
+            </div>
+          </div>
+          <div class="step">
+            <span class="step-mark ok">M</span>
+            <div class="step-body">
+              <div class="step-label">Mirrored 模式</div>
+              <div class="step-detail">
+                WSL 与 Windows 共享回环，127.0.0.1 直接互通。可在 %USERPROFILE%\.wslconfig
+                中设置 networkingMode=mirrored 后 wsl --shutdown 重启。
+              </div>
+            </div>
+          </div>
+          <div class="step">
+            <span class="step-mark ok">✓</span>
+            <div class="step-body">
+              <div class="step-label">本工具的边界</div>
+              <div class="step-detail">
+                不代做需要管理员权限的端口转发（如 netsh interface portproxy），
+                以免在用户不知情时改动系统网络配置。
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </template>
   </div>

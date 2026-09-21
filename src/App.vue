@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import Dashboard from "./pages/Dashboard.vue";
 import Server from "./pages/Server.vue";
 import Apps from "./pages/Apps.vue";
@@ -7,46 +7,189 @@ import NetworkDiag from "./pages/NetworkDiag.vue";
 import Wsl from "./pages/Wsl.vue";
 import Diagnostics from "./pages/Diagnostics.vue";
 import Settings from "./pages/Settings.vue";
+import { store, initStore, stateLabel, stateKind } from "./stores/gateway";
+import { theme, toggleTheme } from "./stores/theme";
 
 type TabKey = "dashboard" | "server" | "apps" | "netdiag" | "wsl" | "diagnostics" | "settings";
-const tabs: { key: TabKey; label: string }[] = [
-  { key: "dashboard", label: "首页" },
-  { key: "server", label: "服务器" },
-  { key: "apps", label: "应用" },
-  { key: "netdiag", label: "网络诊断" },
-  { key: "wsl", label: "WSL2" },
-  { key: "diagnostics", label: "诊断" },
-  { key: "settings", label: "设置" },
+
+/**
+ * 导航项。icon 是内联 SVG 的 path 数据（24x24 viewBox、stroke 绘制）。
+ * 用内联路径而不是图标字体/图片：无额外请求、可跟随 currentColor 变色、
+ * 且离线可用（桌面应用不能依赖 CDN）。
+ */
+const tabs: { key: TabKey; label: string; icon: string; group: string }[] = [
+  {
+    key: "dashboard",
+    label: "首页",
+    group: "网关",
+    icon: "M3 12l9-9 9 9M5 10v10h14V10",
+  },
+  {
+    key: "server",
+    label: "服务器",
+    group: "网关",
+    icon: "M4 5h16v5H4zM4 14h16v5H4zM7.5 7.5h.01M7.5 16.5h.01",
+  },
+  {
+    key: "apps",
+    label: "应用",
+    group: "网关",
+    icon: "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z",
+  },
+  {
+    key: "netdiag",
+    label: "网络诊断",
+    group: "诊断",
+    icon: "M3 12h4l2.5-6 3 12L15 12h6",
+  },
+  {
+    key: "wsl",
+    label: "WSL2",
+    group: "诊断",
+    icon: "M4 7l8-4 8 4v10l-8 4-8-4zM12 3v18M4 7l8 4 8-4",
+  },
+  {
+    key: "diagnostics",
+    label: "日志与导出",
+    group: "诊断",
+    icon: "M5 3h9l5 5v13H5zM14 3v5h5M8 13h8M8 17h5",
+  },
+  {
+    key: "settings",
+    label: "设置",
+    group: "系统",
+    icon: "M12 15a3 3 0 100-6 3 3 0 000 6zM19 12a7 7 0 00-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 00-2-1.2L14 3h-4l-.5 2.6a7 7 0 00-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 005 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 002 1.2L10 21h4l.5-2.6a7 7 0 002-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z",
+  },
 ];
+
 const active = ref<TabKey>("dashboard");
+
+const state = computed(() => store.snapshot?.state);
+const kind = computed(() => stateKind(state.value));
+
+/** 侧栏底部状态摘要：让用户在任何页面都能看到隧道通不通。 */
+const statusTitle = computed(() => stateLabel(state.value));
+const statusSub = computed(() => {
+  const s = store.snapshot;
+  if (!s) return "正在读取状态…";
+  if (s.state === "EGRESS_VERIFIED") {
+    const ip = s.last_verify?.egress_ip;
+    return ip ? `出口 ${ip}` : "出口已验证";
+  }
+  if (s.state === "TUNNEL_READY") return "隧道已通，出口待验证";
+  if (s.state === "CONNECTING" || s.state === "RECONNECTING" || s.state === "DISCONNECTING") {
+    return "请稍候…";
+  }
+  if (s.state === "UNCONFIGURED") return "尚未配置服务器";
+  if (s.state === "ERROR") return "连接出错";
+  return "未连接";
+});
+
+/** 连接中状态需要脉冲动画提示「正在做事」。 */
+const pulsing = computed(
+  () => state.value === "CONNECTING" || state.value === "RECONNECTING",
+);
+
+/** 侧栏是否处于「连接成功」态，用于给状态卡上色。 */
+const statusKind = computed(() => {
+  const k = kind.value;
+  if (k === "ok") return "ok";
+  if (k === "err") return "err";
+  if (state.value === "TUNNEL_READY" || state.value === "DEGRADED") return "warn";
+  if (pulsing.value) return "warn";
+  return "";
+});
+
+/** 按 group 分组渲染导航，避免一长串平铺。 */
+const grouped = computed(() => {
+  const order: string[] = [];
+  const map = new Map<string, typeof tabs>();
+  for (const t of tabs) {
+    if (!map.has(t.group)) {
+      map.set(t.group, []);
+      order.push(t.group);
+    }
+    map.get(t.group)!.push(t);
+  }
+  return order.map((g) => ({ group: g, items: map.get(g)! }));
+});
+
+onMounted(async () => {
+  await initStore();
+});
 </script>
 
 <template>
   <div class="shell">
-    <header class="topbar">
-      <div class="brand">
-        <span class="brand-dot"></span>
-        <span>LostCodexGateway</span>
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-text">
+          <span class="brand-name">LostCodexGateway</span>
+          <span class="brand-sub">SSH 出口网关</span>
+        </span>
       </div>
-      <nav class="tabs">
-        <button
-          v-for="t in tabs"
-          :key="t.key"
-          :class="['tab', { active: active === t.key }]"
-          @click="active = t.key"
-        >
-          {{ t.label }}
-        </button>
+
+      <nav class="nav" aria-label="主导航">
+        <template v-for="g in grouped" :key="g.group">
+          <div class="nav-group-label">{{ g.group }}</div>
+          <button
+            v-for="t in g.items"
+            :key="t.key"
+            :class="['tab', { active: active === t.key }]"
+            :aria-current="active === t.key ? 'page' : undefined"
+            @click="active = t.key"
+          >
+            <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path :d="t.icon" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <span>{{ t.label }}</span>
+          </button>
+        </template>
       </nav>
-    </header>
-    <main class="content">
-      <Dashboard v-if="active === 'dashboard'" @go-server="active = 'server'" />
-      <Server v-else-if="active === 'server'" />
-      <Apps v-else-if="active === 'apps'" />
-      <NetworkDiag v-else-if="active === 'netdiag'" />
-      <Wsl v-else-if="active === 'wsl'" />
-      <Diagnostics v-else-if="active === 'diagnostics'" />
-      <Settings v-else />
-    </main>
+
+      <div class="sidebar-foot">
+        <button
+          class="foot-status"
+          :class="statusKind"
+          :title="statusSub"
+          @click="active = 'dashboard'"
+        >
+          <span :class="['foot-dot', { pulsing }]" aria-hidden="true"></span>
+          <span class="foot-text">
+            <span class="foot-label">{{ statusTitle }}</span>
+            <span class="foot-sub">{{ statusSub }}</span>
+          </span>
+        </button>
+
+        <button class="theme-toggle" @click="toggleTheme">
+          <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              v-if="theme === 'dark'"
+              d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <g v-else stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="4" />
+              <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+            </g>
+          </svg>
+          <span>{{ theme === "dark" ? "切换到浅色" : "切换到深色" }}</span>
+        </button>
+      </div>
+    </aside>
+
+    <div class="main">
+      <main class="content">
+        <Dashboard v-if="active === 'dashboard'" @go-server="active = 'server'" />
+        <Server v-else-if="active === 'server'" />
+        <Apps v-else-if="active === 'apps'" />
+        <NetworkDiag v-else-if="active === 'netdiag'" />
+        <Wsl v-else-if="active === 'wsl'" />
+        <Diagnostics v-else-if="active === 'diagnostics'" />
+        <Settings v-else />
+      </main>
+    </div>
   </div>
 </template>

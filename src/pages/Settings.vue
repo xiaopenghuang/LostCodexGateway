@@ -2,6 +2,7 @@
 import { onMounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { store, initStore } from "../stores/gateway";
+import { theme, toggleTheme } from "../stores/theme";
 import type { AutostartStatus } from "../types/autostart";
 
 const autostart = ref(null as AutostartStatus | null);
@@ -40,26 +41,51 @@ async function toggleAutostart() {
 
 <template>
   <div>
+    <div class="page-head">
+      <div>
+        <h1 class="page-title">设置</h1>
+        <p class="page-desc">界面外观、启动行为与安全策略说明。</p>
+      </div>
+    </div>
+
     <div class="card">
-      <h2>开机启动</h2>
-      <div class="row" style="justify-content: space-between">
-        <span class="k">登录 Windows 后自动启动并驻留托盘</span>
+      <h2>外观</h2>
+      <div class="kv">
+        <span class="k">主题</span>
+        <span class="v">{{ theme === "dark" ? "深色" : "浅色" }}</span>
+      </div>
+      <div class="row" style="margin-top: 12px">
+        <button class="btn secondary" @click="toggleTheme">
+          切换到{{ theme === "dark" ? "浅色" : "深色" }}
+        </button>
+      </div>
+      <p class="muted">
+        主题偏好保存在本机浏览器存储中，不写入服务器配置，也不随诊断报告导出。
+      </p>
+    </div>
+
+    <div class="card">
+      <h2>
+        开机启动
         <span :class="['status-pill', autostart?.enabled ? 'ok' : 'info']">
           {{ autostart ? (autostart.enabled ? "已启用" : "未启用") : "读取中…" }}
         </span>
-      </div>
+      </h2>
       <p class="muted">
         <b>开机启动不会自动连接隧道。</b>启用后程序随登录驻留到系统托盘，隧道仍需你在「首页」显式点击连接——
         静默建立代理出口会让你失去对网络出口的知情权。
       </p>
-      <p v-if="autostart?.exe_path" class="muted mono" style="font-size: 11px">
-        当前程序：{{ autostart.exe_path }}
-      </p>
-      <p v-if="autostart?.registered_command" class="muted mono" style="font-size: 11px">
+      <div v-if="autostart?.exe_path" class="stat-grid">
+        <div class="stat">
+          <span class="stat-label">当前程序</span>
+          <span class="stat-value dim">{{ autostart.exe_path }}</span>
+        </div>
+      </div>
+      <p v-if="autostart?.registered_command" class="muted mono" style="margin-top: 10px">
         注册表条目：{{ autostart.registered_command }}
       </p>
-      <p v-if="autostart" class="muted">{{ autostart.note }}</p>
-      <div class="row" style="margin-top: 8px">
+      <p v-if="autostart?.note" class="muted">{{ autostart.note }}</p>
+      <div class="row" style="margin-top: 12px">
         <button
           class="btn"
           :disabled="autostartBusy || !autostart || autostart.points_to_other"
@@ -89,26 +115,28 @@ async function toggleAutostart() {
 
     <div class="card">
       <h2>断线与安全策略</h2>
-      <div class="kv">
-        <span class="k">断线策略</span>
-        <span class="v">停止本工具启动的新请求并警告（非透明直连）</span>
+      <div class="stat-grid">
+        <div class="stat">
+          <span class="stat-label">断线策略</span>
+          <span class="stat-value dim">停止新请求并警告（非透明直连）</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">自动重连</span>
+          <span class="stat-value">{{ store.snapshot?.config?.settings?.auto_reconnect ? "开启（有限次数）" : "关闭" }}</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">最大重连次数</span>
+          <span class="stat-value">{{ store.snapshot?.config?.settings?.max_reconnect_attempts ?? 3 }}</span>
+        </div>
       </div>
-      <div class="kv">
-        <span class="k">自动重连</span>
-        <span class="v">{{ store.snapshot?.config?.settings?.auto_reconnect ? "开启（有限次数）" : "关闭" }}</span>
-      </div>
-      <div class="kv">
-        <span class="k">最大重连次数</span>
-        <span class="v">{{ store.snapshot?.config?.settings?.max_reconnect_attempts ?? 3 }}</span>
-      </div>
-      <p class="muted">
+      <p class="muted" style="margin-top: 12px">
         隧道掉线时界面立即显示「已断开」，不会继续展示旧出口 IP，也不会悄悄退回直连后假装「已保护」。
       </p>
     </div>
 
     <div class="card">
       <h2>高级网络集成</h2>
-      <div class="notice">
+      <div class="notice info">
         Mihomo / Clash Verge 规则集成默认关闭（M3 阶段提供检测与受控操作）。
         本工具不会修改系统路由表、不接管全局流量、不需要管理员权限。
       </div>
@@ -116,7 +144,7 @@ async function toggleAutostart() {
 
     <div class="card">
       <h2>隐私与安全说明</h2>
-      <ul class="muted" style="line-height: 1.9">
+      <ul class="muted" style="line-height: 2; padding-left: 18px; margin: 0">
         <li>SSH 私钥只保存路径，不复制、不导出、不写入日志。</li>
         <li>本地 SOCKS / HTTP 代理只监听 127.0.0.1，不向局域网开放。</li>
         <li>不保存 OpenAI OAuth、Cookie、API Key，不读取 Codex 认证目录。</li>

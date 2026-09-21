@@ -189,36 +189,44 @@ function hopStyle(h: PathHop): DiagStatus {
 
 <template>
   <div>
-    <div class="card">
-      <div class="row" style="justify-content: space-between">
-        <h2 style="margin: 0">网络诊断</h2>
-        <div class="row">
-          <button class="btn" :disabled="running" @click="runDiag">
-            {{ running ? "诊断中…（最长 75 秒，不会卡死）" : "开始诊断" }}
-          </button>
-        </div>
+    <div class="page-head">
+      <div>
+        <h1 class="page-title">网络诊断</h1>
+        <p class="page-desc">
+          全部结果来自真实网络检测。SSH 已连接 ≠ Codex 已走网关；无法确认的路由显示「未验证」。
+        </p>
       </div>
-      <p class="muted">
-        全部结果来自真实网络检测。SSH 已连接 ≠ Codex 已走网关；无法确认的路由显示「未验证」。
-      </p>
+      <button class="btn" :disabled="running" @click="runDiag">
+        {{ running ? "诊断中…（最长 75 秒，不会卡死）" : "开始诊断" }}
+      </button>
+    </div>
+
+    <div class="card">
+      <h2>
+        诊断参数
+        <span v-if="report" class="status-pill info">耗时 {{ report.duration_ms }}ms</span>
+      </h2>
       <div class="row">
         <label class="field">Mihomo external-controller secret（可选，仅本次内存使用，不落盘）
           <input type="password" v-model="secret" placeholder="（有 secret 时填写以读取只读连接信息）" style="min-width: 300px" />
         </label>
       </div>
-      <p v-if="error" class="muted mono">{{ error }}</p>
+      <p v-if="error" class="notice err mono">{{ error }}</p>
       <p v-if="lastLoaded" class="muted">{{ lastLoaded }}</p>
     </div>
 
     <!-- 2.1 网络状态总览 -->
     <div class="card">
       <h2>网络状态总览</h2>
-      <div class="row" style="gap: 10px">
-        <div v-for="o in overview" :key="o.label" class="kv" style="flex: 1; min-width: 150px; flex-direction: column; align-items: flex-start; gap: 4px">
+      <div class="stat-grid">
+        <div v-for="o in overview" :key="o.label" class="stat">
           <span :class="['status-pill', statusClass(o.status)]">{{ o.label }}</span>
-          <span class="muted" style="line-height: 1.4">{{ o.detail }}</span>
+          <span class="stat-value dim" style="margin-top: 8px; font-family: var(--font-ui); font-size: var(--fs-base); line-height: 1.45">
+            {{ o.detail }}
+          </span>
         </div>
       </div>
+      <p v-if="!report" class="empty">尚无数据，点击右上角「开始诊断」。</p>
       <p v-if="report && !report.gateway_ready && report.tunnel_status === 'ok'" class="notice">
         SSH 隧道正常，但目标应用尚未验证使用该出口。
       </p>
@@ -233,22 +241,22 @@ function hopStyle(h: PathHop): DiagStatus {
       <h2>网络路径检测</h2>
       <div class="row" style="align-items: stretch">
         <template v-for="(h, i) in report?.path_hops ?? []" :key="h.name">
-          <div class="kv" style="flex-direction: column; align-items: center; gap: 6px; min-width: 130px; text-align: center">
+          <div class="stat" style="flex: 1 1 130px; min-width: 130px; text-align: center">
             <span :class="['status-pill', hopStyle(h)]">{{ h.name }}</span>
-            <span class="muted">{{ h.latency_ms != null ? `${h.latency_ms}ms` : "—" }}</span>
-            <span class="muted" style="font-size: 11px; line-height: 1.4">{{ h.detail }}</span>
+            <span class="stat-value" style="margin-top: 8px">{{ h.latency_ms != null ? `${h.latency_ms}ms` : "—" }}</span>
+            <span class="muted" style="font-size: 11px; line-height: 1.4; display: block; margin-top: 4px">{{ h.detail }}</span>
           </div>
           <div v-if="i < (report?.path_hops?.length ?? 0) - 1" class="muted" style="align-self: center">→</div>
         </template>
       </div>
-      <p v-if="!report" class="muted">尚未诊断。</p>
+      <p v-if="!report" class="empty">尚未诊断。</p>
     </div>
 
     <!-- 2.3 Codex 客户端诊断 -->
     <div class="card">
       <h2>Codex 客户端诊断</h2>
       <div class="row" style="align-items: stretch">
-        <div v-for="c in report?.clients ?? []" :key="c.kind" style="flex: 1; min-width: 220px; border: 1px solid var(--border); border-radius: 8px; padding: 12px">
+        <div v-for="c in report?.clients ?? []" :key="c.kind" class="readout" style="flex: 1 1 220px; min-width: 220px">
           <div class="row" style="justify-content: space-between">
             <b>{{ c.label }}</b>
             <span :class="['status-pill', c.running ? routingClass(c.routing) : 'info']">
@@ -260,9 +268,10 @@ function hopStyle(h: PathHop): DiagStatus {
           <p class="muted" style="margin-top: 8px">
             依据：进程信息 + 路径 + Mihomo 连接关联 + 触发测试请求。单条连接不能推断全部流量已转发。
           </p>
-          <button class="btn secondary" :disabled="running" @click="diagnoseOne(c.kind)">检测</button>
+          <button class="btn secondary sm" :disabled="running" @click="diagnoseOne(c.kind)">检测</button>
         </div>
       </div>
+      <p v-if="!report" class="empty">尚未诊断。</p>
       <p v-if="report && report.mihomo.tun_enabled === false" class="notice">
         TUN 未开启：Desktop / IDE 的进程级分流尚未覆盖（如实报告，不含糊其辞）。
       </p>
@@ -302,13 +311,16 @@ function hopStyle(h: PathHop): DiagStatus {
     <!-- 预期出口 IP 配置 -->
     <div class="card">
       <h2>预期服务器出口 IP（可选）</h2>
-      <div class="row">
+      <div class="notice info">
+        出口 IP 检测要求（需求文档 §3.2）：代理出口必须显式指定 SOCKS5 + 远端 DNS，
+        绝不把服务器地址当已验证出口。
+      </div>
+      <div class="row" style="margin-top: 12px">
         <label class="field">预期出口 IP（空 = 不校验；填入后诊断会做匹配判定）
           <input type="text" v-model="expectedIp" placeholder="如 1.2.3.4" />
         </label>
         <button class="btn secondary" @click="saveExpectedIp">保存并重新诊断</button>
       </div>
-      <p class="muted">出口 IP 检测要求（需求文档 §3.2）：代理出口必须显式指定 SOCKS5 + 远端 DNS，绝不把服务器地址当已验证出口。</p>
     </div>
   </div>
 </template>
