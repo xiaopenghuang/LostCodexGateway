@@ -22,6 +22,10 @@ id_*
 .env.*
 *.local
 
+# ---- 本机环境盘点（含真实用户名/盘符/已装软件/进程，仅供本地分析）----
+docs/m0-environment-report.json
+*.local.json
+
 # ---- 日志与临时文件 ----
 *.log
 npm-debug.log*

@@ -94,7 +94,7 @@ fn strip_icon_index(raw: &str) -> &str {
     }
 }
 
-/// 从卸载注册表项解析 DisplayIcon（形如 `G:\Clash Verge\clash-verge.exe,0`）。
+/// 从卸载注册表项解析 DisplayIcon（形如 `D:\Clash Verge\clash-verge.exe,0`）。
 fn from_registry() -> Option<PathBuf> {
     let keys = [
         r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Clash Verge",
@@ -109,7 +109,7 @@ fn from_registry() -> Option<PathBuf> {
             continue;
         }
         let text = String::from_utf8_lossy(&out.stdout);
-        // 值形如：    DisplayIcon    REG_SZ    G:\Clash Verge\clash-verge.exe,0
+        // 值形如：    DisplayIcon    REG_SZ    D:\Clash Verge\clash-verge.exe,0
         //      或：    DisplayIcon    REG_SZ    "D:\Tools\Clash Verge\clash-verge.exe",-1
         // 注意顺序：必须先剥掉 `,<图标索引>`，再去引号。反过来做的话，
         // 带引号且以 `,-1` 结尾的值会留下一个多余的尾部引号。
@@ -208,7 +208,7 @@ pub fn detect() -> MihomoDetection {
         }
     }
     // Verge 版本信息：先定位实际安装路径（用户可能装在任意盘符），再读文件版本。
-    // 不硬编码路径——曾经写死 G:\Clash Verge\，装到别处就永远读不到版本。
+    // 不硬编码路径——曾经写死 D:\Clash Verge\，装到别处就永远读不到版本。
     if let Some(exe) = locate_verge_exe() {
         d.verge_path = Some(exe.to_string_lossy().to_string());
         if let Ok(out) = std_cmd("powershell")
@@ -382,11 +382,11 @@ mod tests {
 
     /// 注册表 DisplayIcon 解析：必须剥掉 `,0` / `,-1` 图标索引与引号，
     /// 且两条顺序都不能弄反（先剥索引再去引号），否则会残留尾部引号。
-    /// 修复前这里是硬编码 `G:\Clash Verge\clash-verge.exe`。
+    /// 修复前这里是硬编码 `D:\Clash Verge\clash-verge.exe`。
     #[test]
     fn display_icon_value_is_parsed_without_hardcoded_drive() {
         for (line, expected) in [
-            (r"    DisplayIcon    REG_SZ    G:\Clash Verge\clash-verge.exe,0", r"G:\Clash Verge\clash-verge.exe"),
+            (r"    DisplayIcon    REG_SZ    D:\Clash Verge\clash-verge.exe,0", r"D:\Clash Verge\clash-verge.exe"),
             (r#"    DisplayIcon    REG_SZ    "D:\Tools\Clash Verge\clash-verge.exe",-1"#, r"D:\Tools\Clash Verge\clash-verge.exe"),
             (r"    DisplayIcon    REG_SZ    C:\verge.exe", r"C:\verge.exe"),
             (r#"    DisplayIcon    REG_SZ    "E:\a b\clash-verge.exe""#, r"E:\a b\clash-verge.exe"),

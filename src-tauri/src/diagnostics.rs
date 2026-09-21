@@ -1148,7 +1148,7 @@ mod tests {
     #[test]
     fn parse_mihomo_connections_sample() {
         let json = r#"{"connections":[{
-            "metadata":{"host":"api.openai.com","destinationIP":"1.2.3.4","processPath":"G:\\Programs\\codex\\codex.exe","process":"codex.exe"},
+            "metadata":{"host":"api.openai.com","destinationIP":"1.2.3.4","processPath":"D:\\Tools\\codex\\codex.exe","process":"codex.exe"},
             "chains":["PROXY","MY-VPS"],"rulePayload":"MY-VPS"
         },{
             "metadata":{"host":"example.com","destinationIP":"5.6.7.8","processPath":"C:\\x\\node.exe","process":"node.exe"},
@@ -1169,13 +1169,13 @@ mod tests {
 
     #[test]
     fn proc_classification() {
-        let desktop = ProcInfo { pid: 1, name: "codex.exe".into(), path: Some(r"G:\Programs\codex\codex.exe".into()), cmdline: None };
+        let desktop = ProcInfo { pid: 1, name: "codex.exe".into(), path: Some(r"D:\Tools\codex\codex.exe".into()), cmdline: None };
         assert_eq!(classify_proc(&desktop), "desktop");
-        let cli = ProcInfo { pid: 2, name: "codex.exe".into(), path: Some(r"G:\VSCODE\nodejs\node_global\node_modules\@openai\codex\...\codex.exe".into()), cmdline: None };
+        let cli = ProcInfo { pid: 2, name: "codex.exe".into(), path: Some(r"D:\Tools\nodejs\node_global\node_modules\@openai\codex\...\codex.exe".into()), cmdline: None };
         assert_eq!(classify_proc(&cli), "cli");
         let sandbox = ProcInfo { pid: 3, name: "codex-windows-sandbox-service.exe".into(), path: None, cmdline: None };
         assert_eq!(classify_proc(&sandbox), "desktop");
-        let vscode = ProcInfo { pid: 4, name: "Code.exe".into(), path: Some(r"G:\VSCODE\Code.exe".into()), cmdline: None };
+        let vscode = ProcInfo { pid: 4, name: "Code.exe".into(), path: Some(r"D:\Tools\Code.exe".into()), cmdline: None };
         assert_eq!(classify_proc(&vscode), "ide");
         let node_shim = ProcInfo { pid: 5, name: "node.exe".into(), path: None, cmdline: Some("node codex.js --version".into()) };
         assert_eq!(classify_proc(&node_shim), "cli");
@@ -1192,7 +1192,7 @@ mod tests {
         let random_node = ProcInfo {
             pid: 8,
             name: "node.exe".into(),
-            path: Some(r"G:\\VSCODE\\nodejs\\node.exe".into()),
+            path: Some(r"D:\\Tools\\nodejs\\node.exe".into()),
             cmdline: Some("node app.js".into()),
         };
         assert_eq!(classify_proc(&random_node), "other");

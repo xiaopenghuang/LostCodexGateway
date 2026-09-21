@@ -186,7 +186,7 @@ export const SCENARIO_NAMES = Object.keys(SCENARIOS);
 export const MIHOMO = {
   detected: true,
   verge_version: "2.3.4",
-  verge_path: "G:\\Clash Verge\\clash-verge.exe",
+  verge_path: "D:\\Clash Verge\\clash-verge.exe",
   verge_running: true,
   mihomo_running: true,
   mixed_port: 7897,

@@ -4,6 +4,22 @@
 //  B) sshd 容器日志出现对应 connect_to 记录（服务器侧证据）
 import http from "http";
 import { execFileSync } from "child_process";
+import { existsSync } from "node:fs";
+
+
+// --- 路径推导（由 scripts/redact-e2e-paths.py 注入，勿手改）---
+// 脚本可能被从任意工作目录调用，所以路径一律相对本文件解析。
+import { fileURLToPath } from "node:url";
+import { dirname, resolve as resolvePath, join as joinPath } from "node:path";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+/** 仓库根目录（tests/e2e → 仓库根需要上溯两级）。 */
+const REPO_ROOT = resolvePath(__dirname, "..", "..");
+/** Docker 夹具用的测试私钥（仅测试用途，不含任何真实凭据）。 */
+const FIXTURE_KEY = joinPath(REPO_ROOT, "tests", "fixtures", "ssh-server", "keys", "id_test_ed25519");
+/** 截图输出目录。 */
+const SHOT_DIR = joinPath(REPO_ROOT, "docs", "screenshots");
+// --- 路径推导结束 ---
 
 function getJson(url) {
   return new Promise((resolve, reject) => {
@@ -65,7 +81,7 @@ async function main() {
   await call("save_server_config", {
     config: {
       host: "127.0.0.1", port: 2222, username: "testuser",
-      key_path: "I:\\\\开发\\\\LostCodexGateway\\\\tests\\\\fixtures\\\\ssh-server\\\\keys\\\\id_test_ed25519",
+      key_path: FIXTURE_KEY,
       socks_port: 17801,
       ssh_exe_path: "C:\\\\Windows\\\\System32\\\\OpenSSH\\\\ssh.exe",
       server_name: "Docker 夹具",
@@ -96,7 +112,12 @@ async function main() {
   const logBefore = execFileSync("docker", ["logs", "--tail", "50", "lcfg-test-sshd"], { encoding: "utf8" });
 
   step("3. 真实 Codex CLI 经桥接运行（codex doctor）");
-  const codexExe = "G:\\\\VSCODE\\\\nodejs\\\\node_global\\\\node_modules\\\\@openai\\\\codex\\\\node_modules\\\\@openai\\\\codex-win32-x64\\\\vendor\\\\x86_64-pc-windows-msvc\\\\bin\\\\codex.exe";
+  // 本机 Codex 可执行文件位置从环境变量取；未设置则回落到 PATH 里的 `codex`。
+  // 不写死任何盘符 —— 不同机器安装位置不同。
+  const codexExe = process.env.CODEX_EXE || "codex";
+  if (process.env.CODEX_EXE && !existsSync(process.env.CODEX_EXE)) {
+    throw new Error(`CODEX_EXE 指向的文件不存在: ${process.env.CODEX_EXE}`);
+  }
   const env = {
     ...process.env,
     HTTP_PROXY: `http://127.0.0.1:${bridgePort}`,

@@ -363,9 +363,9 @@ pub fn fetch_remote_fingerprint(cfg: &ServerConfig) -> Result<(String, String), 
 ///
 /// known_hosts 与 ssh-keyscan 输出中的 base64 值本身就是公钥的 wire 格式
 /// blob（string(keytype) || string(pubkey)），标准指纹 = SHA256(blob)，
-/// 以 base64（无 padding）展示，如 SHA256:GbND6Gm6zvLIuvZBHEiSgXPYmG3GSRnPHm2ha5DH3XY。
+/// 以 base64（无 padding）展示，形如 SHA256:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx。
 /// 之前实现错把 SHA256(keytype||0x20||pubkey) 且取错字段（把 host 当 keytype），
-/// 导致展示的指纹与 OpenSSH 对不上（实锤于 154.40.48.25:64824）。
+/// 导致展示的指纹与 OpenSSH 对不上（实测环境复现）。
 pub fn fingerprint_of(_key_type: &str, b64: &str) -> Option<String> {
     use sha2::{Digest, Sha256};
     let bytes = base64_decode(b64)?;
@@ -564,14 +564,16 @@ mod tests {
             fingerprint_of("ignored", "YWJj").unwrap(),
             "SHA256:ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0"
         );
-        // 真实 ed25519 主机密钥回归锁定（154.40.48.25:64824，与 ssh-keygen -lf 一致）
+        // ed25519 主机密钥回归锁定（合成测试向量，非真实主机密钥）。
+        // 目的：钉住「wire blob 直取 SHA256」这一算法语义，防止再退回
+        // SHA256(keytype||0x20||pubkey) 的错误实现。
         assert_eq!(
             fingerprint_of(
                 "ssh-ed25519",
-                "AAAAC3NzaC1lZDI1NTE5AAAAIIlyEX2xHR71L2V9JdMANlINuhjKCsWbkbfkR7V2Rli5"
+                "AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f"
             )
             .unwrap(),
-            "SHA256:GbND6Gm6zvLIuvZBHEiSgXPYmG3GSRnPHm2ha5DH3XY"
+            "SHA256:ZkAslGjFiUHdGf/WUL8rQvkib4PTvQatUV0OUQSncCA"
         );
         assert_eq!(base64_decode("!!!invalid"), None);
     }
