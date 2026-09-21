@@ -1,0 +1,38 @@
+# ---- 依赖与构建产物 ----
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+
+# ---- 测试夹具密钥 ----
+# 夹具用的 ed25519 密钥对由 setup.ps1 生成，绝不入库。
+# 用 `**/keys/` 而非固定路径：早期曾因一次误拷贝产生过
+# tests/fixtures/fixtures/ssh-server/keys/ 这样的嵌套路径，
+# 固定路径的规则覆盖不到它，私钥就差点被提交。
+**/keys/
+!**/keys/.gitkeep
+id_*
+*.pem
+*.key
+*.p12
+*.pfx
+
+# ---- 本地配置与凭据 ----
+.env
+.env.*
+*.local
+
+# ---- 日志与临时文件 ----
+*.log
+npm-debug.log*
+*.tmp
+
+# ---- 编辑器与系统 ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ---- AI 助手工作记忆 ----
+# 保留在本地：含个人工作笔记与决策过程，不属于项目产物。
+.workbuddy-ai/

@@ -1,0 +1,33 @@
+# 统一换行处理：仓库内一律存 LF，检出时按平台处理。
+#
+# 为什么需要这个文件：项目在 Windows 上开发，若不定规则，Git 会把源文件
+# 检出成 CRLF 并在提交时产生「整文件变更」的假 diff，也会让 Rust/PowerShell
+# 的换行符在不同机器间来回抖动。
+* text=auto eol=lf
+
+# Windows 脚本：CRLF（PowerShell 5.1 与 cmd 对 LF 的处理不如 CRLF 稳妥）
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制：不做任何换行转换
+*.png binary
+*.ico binary
+*.icns binary
+*.jpg binary
+*.gif binary
+*.woff binary
+*.woff2 binary
+*.exe binary
+
+# 锁文件：保留原样，避免被误判为文本而改写
+Cargo.lock text -diff
+package-lock.json text -diff
+
+# 语言标注（改善 GitHub 统计与 diff 高亮）
+*.rs text
+*.vue text
+*.ts text
+*.md text
+*.json text
+*.toml text

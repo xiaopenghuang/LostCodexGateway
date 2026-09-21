@@ -1,0 +1,129 @@
+﻿{
+    "generated_at":  "2026-09-20 14:34:41 +08:00",
+    "generated_by":  "scripts/m0-detect.ps1",
+    "os":  {
+               "caption":  "Microsoft Windows 10 专业版",
+               "version":  "10.0.19045",
+               "build":  "19045",
+               "arch":  "AMD64"
+           },
+    "ssh":  {
+                "path":  "G:\\Git\\Git\\usr\\bin\\ssh.exe",
+                "version":  ""
+            },
+    "sshd_service":  {
+                         "exists":  false,
+                         "status":  null,
+                         "start_type":  null
+                     },
+    "sshd_config_present":  false,
+    "webview2":  {
+                     "installed":  true,
+                     "version":  "153.0.4234.32"
+                 },
+    "system_proxy":  {
+                         "proxy_enable":  0,
+                         "proxy_server":  "127.0.0.1:2080"
+                     },
+    "clash":  {
+                  "profiles_found":  [
+                                         "C:\\Users\\1\\AppData\\Roaming\\io.github.clash-verge-rev.clash-verge-rev"
+                                     ],
+                  "uninstall_entries":  [
+                                            {
+                                                "DisplayName":  "FlClash 版本 0.8.96+2026081701",
+                                                "DisplayVersion":  "0.8.96+2026081701",
+                                                "InstallLocation":  "G:\\Practical-tools\\FlClash\\"
+                                            },
+                                            {
+                                                "DisplayName":  "Clash Verge",
+                                                "DisplayVersion":  "2.5.2",
+                                                "InstallLocation":  "\"G:\\Clash Verge\""
+                                            }
+                                        ],
+                  "mihomo_cores":  [
+
+                                   ],
+                  "processes":  [
+                                    {
+                                        "ProcessId":  6048,
+                                        "Name":  "FlClashHelperService.exe",
+                                        "ExecutablePath":  null
+                                    },
+                                    {
+                                        "ProcessId":  40756,
+                                        "Name":  "clash-verge.exe",
+                                        "ExecutablePath":  "G:\\Clash Verge\\clash-verge.exe"
+                                    },
+                                    {
+                                        "ProcessId":  41096,
+                                        "Name":  "verge-mihomo.exe",
+                                        "ExecutablePath":  "G:\\Clash Verge\\verge-mihomo.exe"
+                                    }
+                                ],
+                  "config_dirs":  {
+                                      "verge_data":  true,
+                                      "mihomo_default":  true
+                                  }
+              },
+    "codex":  {
+                  "cli_path":  null,
+                  "cli_version":  "codex-cli 0.154.0",
+                  "cli_processes":  [
+                                        {
+                                            "ProcessId":  25428,
+                                            "Name":  "lost-codex-theme.exe",
+                                            "ExecutablePath":  "G:\\Practical-tools\\LostCodexTheme\\lost-codex-theme.exe"
+                                        },
+                                        {
+                                            "ProcessId":  27332,
+                                            "Name":  "codex-windows-sandbox-service.exe",
+                                            "ExecutablePath":  null
+                                        },
+                                        {
+                                            "ProcessId":  45584,
+                                            "Name":  "codex.exe",
+                                            "ExecutablePath":  "C:\\Users\\1\\AppData\\Local\\OpenAI\\Codex\\bin\\247581e40ee272fb\\codex.exe"
+                                        },
+                                        {
+                                            "ProcessId":  46564,
+                                            "Name":  "codex-computer-use-swift.exe",
+                                            "ExecutablePath":  "C:\\Users\\1\\AppData\\Local\\OpenAI\\Codex\\runtimes\\cua_node\\df473e5367fa2b42\\bin\\node_modules\\@oai\\sky\\bin\\windows\\swift\\x64\\codex-computer-use-swift.exe"
+                                        },
+                                        {
+                                            "ProcessId":  28792,
+                                            "Name":  "codex-code-mode-host.exe",
+                                            "ExecutablePath":  "C:\\Users\\1\\AppData\\Local\\OpenAI\\Codex\\bin\\247581e40ee272fb\\codex-code-mode-host.exe"
+                                        }
+                                    ],
+                  "desktop_dirs_found":  [
+                                             "C:\\Users\\1\\AppData\\Roaming\\codex",
+                                             "C:\\Users\\1\\AppData\\Local\\codex"
+                                         ],
+                  "desktop_uninstall":  [
+                                            {
+                                                "DisplayName":  "LostCodexTheme",
+                                                "DisplayVersion":  "0.2.1",
+                                                "InstallLocation":  "\"G:\\Practical-tools\\LostCodexTheme\"",
+                                                "UninstallString":  "\"G:\\Practical-tools\\LostCodexTheme\\uninstall.exe\""
+                                            }
+                                        ],
+                  "vscode":  {
+                                 "found":  true,
+                                 "path":  "G:\\VSCODE\\Microsoft VS Code\\bin\\code.cmd"
+                             },
+                  "wsl":  {
+                              "enabled":  true
+                          },
+                  "oauth_dirs":  {
+                                     "chatgpt_present":  true
+                                 }
+              },
+    "connectivity":  {
+                         "direct_egress_ip":  "FAILED: 基础连接已经关闭: 发送时发生错误。",
+                         "ip_service":  "https://api.ipify.org?format=json"
+                     },
+    "ssh_processes":  [
+
+                      ]
+}

@@ -1,0 +1,9 @@
+{
+  "$schema": "gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "LostCodexGateway 默认能力（无 shell 权限，仅命令白名单）",
+  "windows": ["main"],
+  "permissions": [
+    "core:default"
+  ]
+}
