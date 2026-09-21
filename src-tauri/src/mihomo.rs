@@ -15,6 +15,8 @@ use std::path::PathBuf;
 pub struct MihomoDetection {
     pub verge_installed: bool,
     pub verge_version: Option<String>,
+    /// 探测到的 Verge 可执行文件路径（找不到时为 None，不猜路径）。
+    pub verge_path: Option<String>,
     pub verge_running: bool,
     pub mihomo_running: bool,
     pub mixed_port: Option<u16>,
@@ -41,6 +43,134 @@ pub fn verge_data_dir() -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// 定位 Clash Verge Rev 主程序的真实路径（只读，不猜测）。
+///
+/// 顺序：注册表卸载信息 → 已运行进程的实际映像路径 → 常见安装目录 → PATH。
+/// 全部失败返回 None——**宁可报告「未知版本」，不要猜一个路径**。
+fn locate_verge_exe() -> Option<PathBuf> {
+    // 1) 注册表：Verge 是 NSIS 安装，卸载项里通常带 DisplayIcon / InstallLocation
+    if let Some(p) = from_registry() {
+        return Some(p);
+    }
+    // 2) 已运行进程的映像路径（最可靠：进程真在跑就一定拿得到）
+    if let Some(p) = from_running_process() {
+        return Some(p);
+    }
+    // 3) 常见安装位置（含各盘符 Program Files）
+    for cand in common_install_paths() {
+        if cand.exists() {
+            return Some(cand);
+        }
+    }
+    // 4) PATH
+    if let Ok(paths) = std::env::var("PATH") {
+        for dir in paths.split(';') {
+            let p = PathBuf::from(dir).join(VERGE_EXE);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
+const VERGE_EXE: &str = "clash-verge.exe";
+
+/// 剥掉 DisplayIcon 值末尾的 `,<图标索引>` 后缀（`R:` 或 `R:,-1`）。
+/// 引号由调用方在剥离后缀之后处理，避免残留尾部引号。
+fn strip_icon_index(raw: &str) -> &str {
+    match raw.rsplit_once(',') {
+        Some((head, tail)) => {
+            let t = tail.trim();
+            if !t.is_empty() && t.chars().all(|c| c.is_ascii_digit() || c == '-') {
+                head
+            } else {
+                raw
+            }
+        }
+        None => raw,
+    }
+}
+
+/// 从卸载注册表项解析 DisplayIcon（形如 `G:\Clash Verge\clash-verge.exe,0`）。
+fn from_registry() -> Option<PathBuf> {
+    let keys = [
+        r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Clash Verge",
+        r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Clash Verge",
+        r"HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Clash Verge",
+    ];
+    for key in keys {
+        let Ok(out) = std_cmd("reg").args(["query", key, "/v", "DisplayIcon"]).output() else {
+            continue;
+        };
+        if !out.status.success() {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&out.stdout);
+        // 值形如：    DisplayIcon    REG_SZ    G:\Clash Verge\clash-verge.exe,0
+        //      或：    DisplayIcon    REG_SZ    "D:\Tools\Clash Verge\clash-verge.exe",-1
+        // 注意顺序：必须先剥掉 `,<图标索引>`，再去引号。反过来做的话，
+        // 带引号且以 `,-1` 结尾的值会留下一个多余的尾部引号。
+        for line in text.lines() {
+            let Some(idx) = line.find("REG_SZ") else { continue };
+            let raw = line[idx + "REG_SZ".len()..].trim();
+            let path = strip_icon_index(raw);
+            let p = PathBuf::from(path.trim_matches('"').trim());
+            if p.exists() {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
+/// 从正在运行的 clash-verge.exe 进程读取映像路径。
+fn from_running_process() -> Option<PathBuf> {
+    // wmic 在新版 Windows 已弃用，优先 PowerShell CIM
+    let out = std_cmd("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            "(Get-Process -Name 'clash-verge' -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Path)",
+        ])
+        .output()
+        .ok()?;
+    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if path.is_empty() {
+        return None;
+    }
+    let p = PathBuf::from(path);
+    p.exists().then_some(p)
+}
+
+/// 各盘符下的常见安装目录（覆盖 Program Files 与免安装解压目录）。
+fn common_install_paths() -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    let mut roots: Vec<String> = Vec::new();
+    for var in ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA", "USERPROFILE"] {
+        if let Ok(v) = std::env::var(var) {
+            if !v.trim().is_empty() {
+                roots.push(v);
+            }
+        }
+    }
+    for root in roots {
+        out.push(PathBuf::from(&root).join("Clash Verge").join(VERGE_EXE));
+        // 免安装常见命名
+        out.push(PathBuf::from(&root).join("clash-verge").join(VERGE_EXE));
+    }
+    // 盘符根的常见目录：只查存在盘符，不遍历全盘
+    for drive in 'C'..='Z' {
+        let root = format!("{}:\\", drive);
+        if !PathBuf::from(&root).exists() {
+            continue;
+        }
+        out.push(PathBuf::from(&root).join("Clash Verge").join(VERGE_EXE));
+        out.push(PathBuf::from(&root).join("ClashVerge").join(VERGE_EXE));
+    }
+    out
 }
 
 /// 只读检测：不修改任何 Mihomo/Verge 配置。
@@ -77,18 +207,25 @@ pub fn detect() -> MihomoDetection {
             d.mixed_port = v.trim().parse().ok();
         }
     }
-    // 运行中进程的版本信息（tasklist /V 或文件版本）
-    if let Ok(out) = std_cmd("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "(Get-Item 'G:\\Clash Verge\\clash-verge.exe' -ErrorAction SilentlyContinue).VersionInfo.FileVersion",
-        ])
-        .output()
-    {
-        let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if !v.is_empty() {
-            d.verge_version = Some(v);
+    // Verge 版本信息：先定位实际安装路径（用户可能装在任意盘符），再读文件版本。
+    // 不硬编码路径——曾经写死 G:\Clash Verge\，装到别处就永远读不到版本。
+    if let Some(exe) = locate_verge_exe() {
+        d.verge_path = Some(exe.to_string_lossy().to_string());
+        if let Ok(out) = std_cmd("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                &format!(
+                    "(Get-Item -LiteralPath '{}' -ErrorAction SilentlyContinue).VersionInfo.FileVersion",
+                    exe.to_string_lossy().replace('\'', "''")
+                ),
+            ])
+            .output()
+        {
+            let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !v.is_empty() {
+                d.verge_version = Some(v);
+            }
         }
     }
 
@@ -241,6 +378,36 @@ mod tests {
         let block = extract_yaml_block(raw, "tun:").unwrap();
         assert!(block.contains("enable: true"));
         assert!(!block.contains("dns:"));
+    }
+
+    /// 注册表 DisplayIcon 解析：必须剥掉 `,0` / `,-1` 图标索引与引号，
+    /// 且两条顺序都不能弄反（先剥索引再去引号），否则会残留尾部引号。
+    /// 修复前这里是硬编码 `G:\Clash Verge\clash-verge.exe`。
+    #[test]
+    fn display_icon_value_is_parsed_without_hardcoded_drive() {
+        for (line, expected) in [
+            (r"    DisplayIcon    REG_SZ    G:\Clash Verge\clash-verge.exe,0", r"G:\Clash Verge\clash-verge.exe"),
+            (r#"    DisplayIcon    REG_SZ    "D:\Tools\Clash Verge\clash-verge.exe",-1"#, r"D:\Tools\Clash Verge\clash-verge.exe"),
+            (r"    DisplayIcon    REG_SZ    C:\verge.exe", r"C:\verge.exe"),
+            (r#"    DisplayIcon    REG_SZ    "E:\a b\clash-verge.exe""#, r"E:\a b\clash-verge.exe"),
+        ] {
+            let idx = line.find("REG_SZ").unwrap();
+            let raw = line[idx + "REG_SZ".len()..].trim();
+            let path = strip_icon_index(raw);
+            assert_eq!(path.trim_matches('"').trim(), expected, "解析 {line:?} 失败");
+        }
+    }
+
+    /// 常见安装路径必须由环境变量/盘符动态推导，不得出现写死路径。
+    #[test]
+    fn common_install_paths_are_derived_not_hardcoded() {
+        let paths = common_install_paths();
+        assert!(!paths.is_empty(), "应至少推导出若干候选路径");
+        // 每个候选都必须是绝对路径且以 verge 可执行文件结尾
+        for p in &paths {
+            assert!(p.is_absolute(), "候选路径应为绝对路径: {:?}", p);
+            assert_eq!(p.file_name().and_then(|n| n.to_str()), Some(VERGE_EXE));
+        }
     }
 
     #[test]

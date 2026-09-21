@@ -107,9 +107,19 @@ pub struct RejectRecord {
 }
 
 pub struct BridgeStats {
+    /// 到达桥接层的连接**尝试**数（含随后被拒/上游失败的），不代表流量真的过了隧道。
     pub connections_total: Arc<AtomicU64>,
     pub connections_active: Arc<AtomicU64>,
+    /// 上游 SOCKS5 建连成功、已回 200 的连接数。
+    ///
+    /// 与 `connections_total` 的区别是**关键**：`_total` 在 TCP 连上来时即自增，
+    /// 此时还不知道目标是合法域名、也不知道 ssh -D 能否建连；只有 `_tunneled`
+    /// 才代表「这条流量确实进了隧道」。诊断据此判定「已验证」，不能拿 `_total`。
+    pub connections_tunneled: Arc<AtomicU64>,
     pub last_target: Arc<parking_lot::Mutex<Option<String>>>,
+    /// 最近 N 条成功经隧道的脱敏目标（环形）。用于把「桥接有过流量」这种
+    /// 全局事实，收窄成「确实有哪几个目标出去了」，从而支持异常判定。
+    pub recent_targets: Arc<parking_lot::Mutex<Vec<String>>>,
     /// 最近 N 条拒绝记录（环形，只保留最新的）
     pub rejects: Arc<parking_lot::Mutex<Vec<RejectRecord>>>,
     pub rejects_total: Arc<AtomicU64>,
@@ -117,13 +127,17 @@ pub struct BridgeStats {
 
 /// 拒绝记录保留条数上限：诊断页只需看最近的，避免无界增长。
 const MAX_REJECT_RECORDS: usize = 20;
+/// 成功目标记录保留条数上限（同上，只为诊断展示）。
+const MAX_TARGET_RECORDS: usize = 20;
 
 impl Default for BridgeStats {
     fn default() -> Self {
         Self {
             connections_total: Arc::new(AtomicU64::new(0)),
             connections_active: Arc::new(AtomicU64::new(0)),
+            connections_tunneled: Arc::new(AtomicU64::new(0)),
             last_target: Arc::new(parking_lot::Mutex::new(None)),
+            recent_targets: Arc::new(parking_lot::Mutex::new(Vec::new())),
             rejects: Arc::new(parking_lot::Mutex::new(Vec::new())),
             rejects_total: Arc::new(AtomicU64::new(0)),
         }
@@ -191,9 +205,22 @@ impl BridgeStats {
         Self {
             connections_total: self.connections_total.clone(),
             connections_active: self.connections_active.clone(),
+            connections_tunneled: self.connections_tunneled.clone(),
             last_target: self.last_target.clone(),
+            recent_targets: self.recent_targets.clone(),
             rejects: self.rejects.clone(),
             rejects_total: self.rejects_total.clone(),
+        }
+    }
+
+    /// 记一条成功经隧道的连接（脱敏目标）。target 必须已由 sanitize_target 处理。
+    fn record_tunneled(&self, target: &str) {
+        self.connections_tunneled.fetch_add(1, Ordering::Relaxed);
+        let mut v = self.recent_targets.lock();
+        v.push(target.to_string());
+        if v.len() > MAX_TARGET_RECORDS {
+            let overflow = v.len() - MAX_TARGET_RECORDS;
+            v.drain(0..overflow);
         }
     }
 
@@ -217,7 +244,9 @@ impl BridgeStats {
         BridgeSnapshot {
             connections_total: self.connections_total.load(Ordering::Relaxed),
             connections_active: self.connections_active.load(Ordering::Relaxed),
+            connections_tunneled: self.connections_tunneled.load(Ordering::Relaxed),
             last_target: self.last_target.lock().clone(),
+            recent_targets: self.recent_targets.lock().clone(),
             rejects_total: self.rejects_total.load(Ordering::Relaxed),
             recent_rejects: self.rejects.lock().clone(),
         }
@@ -227,9 +256,14 @@ impl BridgeStats {
 /// 桥接层统计快照（给前端的可序列化形式）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BridgeSnapshot {
+    /// 连接尝试数（含被拒/上游失败的）。
     pub connections_total: u64,
     pub connections_active: u64,
+    /// 真正建连成功、进了隧道的连接数。判定「已验证」只认这个。
+    pub connections_tunneled: u64,
     pub last_target: Option<String>,
+    /// 最近成功经隧道的脱敏目标。
+    pub recent_targets: Vec<String>,
     pub rejects_total: u64,
     pub recent_rejects: Vec<RejectRecord>,
 }
@@ -509,6 +543,9 @@ async fn handle_connection(mut client: TcpStream, socks_port: u16, self_port: u1
             {
                 return;
             }
+            // 到这里才算「流量确实进了隧道」：目标合法 + 下游 SOCKS5 建连成功
+            // + 已向客户端回 200。记录用于诊断的「已验证」判定。
+            stats.record_tunneled(&target);
             // 双向复制 + **真正的空闲**超时。
             //
             // 注意不能用 `timeout(idle, copy_bidirectional(...))`：那是**总时长**

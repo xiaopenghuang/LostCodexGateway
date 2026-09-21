@@ -371,7 +371,43 @@ pub async fn run_server_diag(
 
 // ---------- M3: 客户端归类与路由判定 ----------
 
-/// 由进程快照 + Mihomo 连接构建三类客户端诊断结果。
+/// 客户端路由判定所需的桥接层证据。
+///
+/// 刻意做成独立结构而不是散落的 bool：CLI 与 Desktop/IDE 的判定依据不同，
+/// 但只要有一处实现忘了区分「连接尝试」与「确实进了隧道」，就会虚报已验证。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BridgeEvidence {
+    /// 下游 SOCKS5 建连成功、确实进了隧道的连接数（判定「已验证」只认这个）。
+    pub tunneled: u64,
+    /// 到达桥接层的连接尝试数（含被拒/上游失败的）。
+    pub attempts: u64,
+    /// 是否有请求被桥接层拒绝（说明 CLI 确实试图走网关但失败了）。
+    pub has_rejects: bool,
+}
+
+impl BridgeEvidence {
+    /// 是否有任何流量确实经过了隧道。
+    pub fn has_tunneled(&self) -> bool {
+        self.tunneled > 0
+    }
+}
+
+/// 从全局状态提取桥接层证据（桥接未启动时全部为零/假）。
+fn bridge_evidence(inner: &Inner) -> BridgeEvidence {
+    match inner.bridge_stats.as_ref() {
+        Some(s) => {
+            let snap = s.snapshot();
+            BridgeEvidence {
+                tunneled: snap.connections_tunneled,
+                attempts: snap.connections_total,
+                has_rejects: snap.rejects_total > 0,
+            }
+        }
+        None => BridgeEvidence::default(),
+    }
+}
+
+/// 由进程快照 + Mihomo 连接 + 桥接证据构建三类客户端诊断结果。
 ///
 /// 抽成独立函数是为了让「单独检测某个客户端」能只做进程/连接关联，
 /// 而不必跑一遍完整诊断（后者含 35s 级服务器 SSH 会话与出口探测）。
@@ -379,7 +415,7 @@ pub fn build_clients(
     procs: &[ProcInfo],
     conns: &[MihomoConn],
     gateway_ok: bool,
-    bridge_activity: bool,
+    bridge: BridgeEvidence,
     tun_enabled: bool,
     group: &str,
 ) -> Vec<ClientDiag> {
@@ -393,13 +429,27 @@ pub fn build_clients(
         }
         let routing = match kind {
             "cli" => {
-                if running {
-                    // CLI 经桥接层：桥接全部流量构造性经隧道；若桥接有连接记录 + 网关出口 OK
-                    if gateway_ok && bridge_activity {
-                        RoutingStatus::Verified
-                    } else {
-                        RoutingStatus::Partial
-                    }
+                // Codex CLI 的路由**不经 Mihomo**：本工具启动时把 HTTP_PROXY 指向
+                // 回环桥接层，桥接层再经 ssh -D 的 SOCKS5 出隧道。因此判定依据是
+                // 桥接层证据，而不是 Mihomo 的 chains/rulePayload。
+                //
+                // 判定必须与 desktop/ide 一样能给出「异常」。曾经的实现在这里只看
+                // 「网关可能可达 && 桥接有过连接」，于是：
+                //   1) 永远得不出 Anomaly；
+                //   2) 用的是「连接尝试数」，而它在 TCP 刚连上来时就自增，
+                //      目标非法 / SOCKS5 建连失败 / 并发满的尝试也会计入，
+                //      把「试图走网关但失败」冒充成「已验证」。
+                // 这与本项目「无法确认即不得声称已验证」的原则直接冲突，故拆开：
+                //   - 确实有流量进了隧道 → Verified
+                //   - 只看到尝试（被拒/上游失败）→ Anomaly（试图走网关但没出去）
+                //   - 进程在跑、桥接层零动静 → Unverified（不能排除它根本没读到
+                //     代理环境变量而直连；但也不能断言异常）
+                if !running {
+                    RoutingStatus::Unverified
+                } else if bridge.has_tunneled() && gateway_ok {
+                    RoutingStatus::Verified
+                } else if bridge.attempts > 0 || bridge.has_rejects {
+                    RoutingStatus::Anomaly
                 } else {
                     RoutingStatus::Unverified
                 }
@@ -434,7 +484,15 @@ pub fn build_clients(
                         } else if any_gw {
                             RoutingStatus::Partial
                         } else if any_other {
-                            RoutingStatus::Anomaly
+                            // 有连接、但一条都没命中网关组 → 异常。
+                            // 前提是网关确实可用：网关卡本身不通时「没命中」
+                            // 只是网关不可用的副作用，那种情况归 Unverified，
+                            // 否则会把「本地网关没起来」误报成「路由配错了」。
+                            if gateway_ok {
+                                RoutingStatus::Anomaly
+                            } else {
+                                RoutingStatus::Unverified
+                            }
                         } else {
                             RoutingStatus::Unverified
                         }
@@ -472,11 +530,11 @@ pub async fn diagnose_single_client(
     if !matches!(kind, "desktop" | "cli" | "ide") {
         return Err(format!("未知客户端类型: {}", kind));
     }
-    let (group, bridge_activity) = {
+    let (group, bridge) = {
         let g = inner.lock();
         (
             g.config.settings.gateway_group.clone(),
-            g.bridge_stats.as_ref().map(|s| s.snapshot().connections_total > 0).unwrap_or(false),
+            bridge_evidence(&g),
         )
     };
     let procs = discover_codex_processes();
@@ -488,8 +546,8 @@ pub async fn diagnose_single_client(
         _ => vec![],
     };
     // gateway_ok：这里不重新探出口，按网关是否可能可达判定
-    let gateway_ok = mihomo_det.mihomo_running || bridge_activity;
-    let clients = build_clients(&procs, &conns, gateway_ok, bridge_activity, mihomo_det.tun_enabled, &group);
+    let gateway_ok = mihomo_det.mihomo_running || bridge.has_tunneled();
+    let clients = build_clients(&procs, &conns, gateway_ok, bridge, mihomo_det.tun_enabled, &group);
     clients
         .into_iter()
         .find(|c| c.kind == kind)
@@ -560,16 +618,11 @@ pub async fn run_full_diagnostics(
         .pipe_if_empty(ssh::detect_ssh_env().path);
     let endpoints = cfg.verify.endpoints.clone();
     let timeout_secs = CHECK_TIMEOUT_SECS;
-    let bridge_activity = inner
-        .lock()
-        .bridge_stats
-        .as_ref()
-        .map(|s| s.snapshot().connections_total > 0)
-        .unwrap_or(false);
+    let bridge = bridge_evidence(&inner.lock());
 
     // 全局超时包装
     let fut = run_diag_inner(
-        &cfg, state, tunnel_pid, bridge_activity, &ssh_exe, &endpoints, timeout_secs, mihomo_secret,
+        &cfg, state, tunnel_pid, bridge, &ssh_exe, &endpoints, timeout_secs, mihomo_secret,
     );
     let mut report = match tokio::time::timeout(Duration::from_secs(GLOBAL_DIAG_TIMEOUT_SECS), fut).await {
         Ok(r) => r,
@@ -627,7 +680,7 @@ async fn run_diag_inner(
     cfg: &GatewayConfig,
     state: GatewayState,
     tunnel_pid: Option<u32>,
-    bridge_activity: bool,
+    bridge: BridgeEvidence,
     ssh_exe: &str,
     endpoints: &[String],
     timeout_secs: u64,
@@ -847,7 +900,7 @@ async fn run_diag_inner(
     };
 
     // 客户端归类与路由判定
-    let clients = build_clients(&procs, &conns, gateway.is_some(), bridge_activity, mihomo.tun_enabled, &group);
+    let clients = build_clients(&procs, &conns, gateway.is_some(), bridge, mihomo.tun_enabled, &group);
 
     // ---- M4: DNS 与 IPv6 ----
     let mut dns_items: Vec<DiagItem> = Vec::new();
@@ -990,7 +1043,7 @@ mod tests {
     #[test]
     fn build_clients_is_kind_complete_and_conservative() {
         // 无进程、无连接时：三类客户端齐全，且一律「未验证」（不得虚报已验证）
-        let clients = build_clients(&[], &[], false, false, false, "MY-VPS");
+        let clients = build_clients(&[], &[], false, BridgeEvidence::default(), false, "MY-VPS");
         assert_eq!(clients.len(), 3);
         let kinds: Vec<&str> = clients.iter().map(|c| c.kind.as_str()).collect();
         assert!(kinds.contains(&"desktop") && kinds.contains(&"cli") && kinds.contains(&"ide"));
@@ -1000,42 +1053,86 @@ mod tests {
         }
     }
 
-    #[test]
-    fn build_clients_cli_needs_bridge_and_egress_for_verified() {
-        let procs = vec![ProcInfo {
+    fn cli_proc() -> Vec<ProcInfo> {
+        vec![ProcInfo {
             pid: 1234,
             name: "codex.exe".to_string(),
             path: Some(r"C:\Users\me\AppData\Roaming\npm\node_modules\@openai\codex\bin\codex.exe".to_string()),
             cmdline: Some("codex".to_string()),
-        }];
-        // 进程在跑，但网关未验证 / 桥接无活动 → 只能是 partial，绝不能是 verified
-        let clients = build_clients(&procs, &[], false, false, false, "MY-VPS");
+        }]
+    }
+
+    #[test]
+    fn build_clients_cli_needs_tunneled_traffic_for_verified() {
+        let procs = cli_proc();
+        // 进程在跑，但网关未验证 / 桥接无任何流量 → 未验证，绝不能是 verified
+        let clients = build_clients(&procs, &[], false, BridgeEvidence::default(), false, "MY-VPS");
         let cli = clients.iter().find(|c| c.kind == "cli").unwrap();
         assert!(cli.running);
-        assert_eq!(cli.routing, RoutingStatus::Partial);
-        // 网关 OK + 桥接有活动 → 才升级为 verified
-        let clients2 = build_clients(&procs, &[], true, true, false, "MY-VPS");
+        assert_eq!(cli.routing, RoutingStatus::Unverified);
+        // 网关 OK + 确实有流量进了隧道 → 才升级为 verified
+        let ev = BridgeEvidence { tunneled: 3, attempts: 3, has_rejects: false };
+        let clients2 = build_clients(&procs, &[], true, ev, false, "MY-VPS");
         let cli2 = clients2.iter().find(|c| c.kind == "cli").unwrap();
         assert_eq!(cli2.routing, RoutingStatus::Verified);
     }
 
+    /// 回归：修复前 CLI 只看「桥接连接数 > 0」，而该计数在 TCP 刚连上来时就自增，
+    /// 于是「试图走网关但失败」会被误报为已验证。
     #[test]
-    fn build_clients_desktop_without_tun_is_unverified_not_anomaly() {
-        // TUN 关闭且无连接记录：显示未验证（不谎报、也不误报异常）
+    fn build_clients_cli_attempt_without_tunnel_is_anomaly_not_verified() {
+        let procs = cli_proc();
+        // 有连接尝试，但一条都没建连成功（全部被拒/上游失败）
+        let ev = BridgeEvidence { tunneled: 0, attempts: 4, has_rejects: true };
+        let clients = build_clients(&procs, &[], true, ev, false, "MY-VPS");
+        let cli = clients.iter().find(|c| c.kind == "cli").unwrap();
+        assert_eq!(
+            cli.routing,
+            RoutingStatus::Anomaly,
+            "试图走网关却未出去必须报异常，不得冒充已验证"
+        );
+        assert_ne!(cli.routing, RoutingStatus::Verified);
+    }
+
+    /// 网关不可达时，CLI 也不得声称已验证——即便桥接层有建连记录。
+    #[test]
+    fn build_clients_cli_without_reachable_gateway_is_not_verified() {
+        let procs = cli_proc();
+        let ev = BridgeEvidence { tunneled: 2, attempts: 2, has_rejects: false };
+        let clients = build_clients(&procs, &[], false, ev, false, "MY-VPS");
+        let cli = clients.iter().find(|c| c.kind == "cli").unwrap();
+        assert_ne!(cli.routing, RoutingStatus::Verified);
+        assert_eq!(cli.routing, RoutingStatus::Anomaly);
+    }
+
+    /// 网关不可达时，Desktop 的「没命中网关」只是网关不可用的副作用，
+    /// 不能升级成「路由配错了」的异常结论。
+    #[test]
+    fn build_clients_desktop_other_chain_is_unverified_when_gateway_down() {
         let procs = vec![ProcInfo {
             pid: 99,
             name: "ChatGPT.exe".to_string(),
             path: Some(r"C:\Program Files\WindowsApps\OpenAI.Codex_1.0\ChatGPT.exe".to_string()),
             cmdline: None,
         }];
-        let clients = build_clients(&procs, &[], false, false, false, "MY-VPS");
-        let d = clients.iter().find(|c| c.kind == "desktop").unwrap();
-        assert!(d.running);
-        assert_eq!(d.routing, RoutingStatus::Unverified);
-        // TUN 开启但仍无连接 → 只能「无法确认」，不得升级为已验证
-        let clients2 = build_clients(&procs, &[], false, false, true, "MY-VPS");
-        let d2 = clients2.iter().find(|c| c.kind == "desktop").unwrap();
-        assert_eq!(d2.routing, RoutingStatus::Unconfirmable);
+        let conns = parse_mihomo_connections(
+            r#"{"connections":[{
+                "metadata":{"host":"api.openai.com","destinationIP":"1.2.3.4","processPath":"C:\\Program Files\\WindowsApps\\OpenAI.Codex_1.0\\ChatGPT.exe","process":"ChatGPT.exe"},
+                "chains":["PROXY","OTHER"],"rulePayload":"OTHER"
+            }]}"#,
+        );
+        // 网关可达 → 走了别的组 = 异常
+        let ok = build_clients(&procs, &conns, true, BridgeEvidence::default(), true, "MY-VPS");
+        assert_eq!(
+            ok.iter().find(|c| c.kind == "desktop").unwrap().routing,
+            RoutingStatus::Anomaly
+        );
+        // 网关不可达 → 只是网关自身有问题，不得报异常
+        let down = build_clients(&procs, &conns, false, BridgeEvidence::default(), true, "MY-VPS");
+        assert_eq!(
+            down.iter().find(|c| c.kind == "desktop").unwrap().routing,
+            RoutingStatus::Unverified
+        );
     }
 
     #[test]

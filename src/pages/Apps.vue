@@ -220,6 +220,15 @@ async function doRestore() {
           </div>
         </div>
 
+        <!-- 安装路径：装在非默认盘符时，版本号读不到就靠这行排查 -->
+        <div v-if="mihomo.verge_path" class="readout" style="margin-top: 12px">
+          <div class="kv">
+            <span class="k">Verge 安装路径</span>
+            <span class="v mono">{{ mihomo.verge_path }}</span>
+          </div>
+        </div>
+        <p v-else class="muted">未定位到 Verge 可执行文件，版本信息不可用（不影响隧道功能）。</p>
+
         <div class="readout" style="margin-top: 12px">
           <div class="kv">
             <span class="k">Verge / Mihomo 进程</span>

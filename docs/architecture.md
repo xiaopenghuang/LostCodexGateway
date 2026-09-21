@@ -69,9 +69,23 @@
 - **不写用户/系统环境变量**；启动前 UI 预览「将注入哪些设置」。
 - 隧道非 `EGRESS_VERIFIED` 时禁止启动。
 - HTTP CONNECT 桥接层（P1 按需）：仅绑 `127.0.0.1` 随机端口，CONNECT → 下游 SOCKS5；无 TLS MITM、无缓存、限并发。CLI 实测支持 SOCKS 则默认不启用。
+- 桥接层区分两个计数：`connections_total`（连上来的**尝试**，含随后被拒/上游失败的）与 `connections_tunneled`（下游 SOCKS5 建连成功并已回 200 的）。**路由判定「已验证」只认后者**——拿尝试数会把「试图走网关却失败」冒充成「已验证」。
+
+### 3.4.1 路由判定（`diagnostics::build_clients`）
+
+三类客户端的判定依据不同，但都必须能给出「异常」，且都遵守「无法确认即不得声称已验证」：
+
+| 客户端 | 依据 | 四态 |
+|---|---|---|
+| CLI | 桥接层证据（不经 Mihomo） | 有 `connections_tunneled` + 网关可达 → 已验证；只有尝试/有拒绝 → 异常；零动静 → 未验证 |
+| Desktop | Mihomo `/connections` 的 `chains` / `rulePayload` 命中 `gateway_group` | 全命中 → 已验证；部分命中 → 部分；有连接但一条未命中且网关卡可用 → 异常；未命中且网关卡不可用 → 未验证（不误报路由错）；有连接但 TUN 关闭 → 无法确认 |
+| IDE | 同 Desktop | 同上 |
+
+关键约束：**网关卡自身不可达时不得报告「异常」**——那种情况「没命中网关」只是网关不可用的副作用，报异常会把「本地网关没起来」误导成「路由配错了」。
 
 ### 3.5 `mihomo`（P1/M3）
-- 只读检测：Verge 版本、mihomo 进程、mixed 端口、external-controller 可达性（secret 由用户输入且不落盘）、TUN 状态、profile 链结构。
+- 只读检测：Verge 版本与**实际安装路径**、mihomo 进程、mixed 端口、external-controller 可达性（secret 由用户输入且不落盘）、TUN 状态、profile 链结构。
+- 可执行文件定位顺序：注册表卸载项 `DisplayIcon` → 运行中进程映像路径 → 常见安装目录（由环境变量与盘符动态推导）→ PATH；全部失败则如实报告「未定位到」，**不猜路径**。
 - 集成：生成**独立规则片段**（PROCESS-NAME/PROCESS-PATH → MY-VPS，置于最终 MATCH 前）+ 备份；经 Verge 扩展配置/手动导入入口应用；一键回滚（恢复本工具备份；检测到用户同时修改只报告冲突不覆盖）。
 - 规则生成前提：进程发现 + 用户确认范围；`Code.exe`/`node.exe` 等通用进程默认不整体导流。
 
