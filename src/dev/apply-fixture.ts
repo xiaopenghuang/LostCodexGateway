@@ -120,3 +120,15 @@ export function applyFixture(name: string): void {
 
   console.info(`[fixture] 已注入场景「${name}」，state=${snap.state}`);
 }
+
+// 供验证脚本在**同一个页面**里遍历多个场景。
+//
+// 没有这个入口就只能「一个场景重启一次 dev server」：遍历 6 个场景要重启 6 次，
+// 成本高到没人愿意跑——而「逐状态核对按钮可用性」这类检查恰恰需要遍历。
+// 本模块只在 dev + 设置了 VITE_LCFG_FIXTURE 时被动态导入，
+// 生产构建里整块会被摇掉（已用二进制标记扫描验证过）。
+if (typeof window !== "undefined") {
+  const w = window as unknown as Record<string, unknown>;
+  w.__applyFixture = applyFixture;
+  w.__fixtureNames = SCENARIO_NAMES;
+}

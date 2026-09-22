@@ -221,6 +221,36 @@ const SCENARIOS: Record<string, GatewaySnapshot> = {
     previous_server_id: "srv-1a2b3c",
   },
 
+  /**
+   * 切换失败后的**恢复态**（`DISCONNECTED`）。
+   *
+   * 这是「切换失败卡死在 SWITCHING」修复后应当落到的状态，专门用来验证
+   * **界面上至少还有一个可用按钮**——若「连接」也被禁用，用户仍然没有出路，
+   * 修复就只做了一半。
+   *
+   * 数据刻意与 `switching` 对齐：选中项已经是新服务器、`previous_server_id`
+   * 指向旧的那台，`last_error` 是真实的报错文案（走的是 Host Key 未确认这条
+   * 最容易踩到的路径）。同时借此检查超长服务器名在错误信息里的换行表现。
+   */
+  disconnected: {
+    state: "DISCONNECTED",
+    config: { ...CONFIG, active_server_id: "srv-4d5e6f" },
+    last_verify: null,
+    ssh_pid: null,
+    last_error:
+      "已切换到「备用出口（新加坡，用于主节点故障时切换）」但连接失败："
+      + "服务器 Host Key 尚未确认：请先在「服务器」页查询并核对指纹后确认。"
+      + "已选中项仍为「备用出口（新加坡，用于主节点故障时切换）」，"
+      + "可点「切回上一个」回到「东京中转节点」",
+    recent_logs: logs().slice(0, 5),
+    bridge_port: null,
+    bridge_connections_total: 0,
+    bridge_last_target: null,
+    bridge_rejects_total: 0,
+    bridge_recent_rejects: [],
+    previous_server_id: "srv-1a2b3c",
+  },
+
   /** 错误态：超长错误信息，检查溢出 */
   error: {
     state: "ERROR",

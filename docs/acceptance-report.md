@@ -488,9 +488,42 @@ Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.78s   （零警�
 | `failed_switch_keeps_more_informative_states` | 已推进到 `Error` 等状态不被兜底覆盖 |
 | `disconnected_is_actionable` | 落点 `Disconnected` 既不算「隧道活跃」（否则删服务器/改端口被无谓拒绝），也不算「连接进行中」（否则用户无法按「连接」重试） |
 
-> **诚实声明**：以上是**静态分析 + 纯函数单元测试**的结论，**没有在真机上复现过**
-> 那个卡死现象（需要双服务器环境）。「切到未确认 Host Key 的服务器后界面仍可继续操作」
-> 这条完整链路仍未验证，见 §5.8。
+**前端侧实测**——把「`Switching` 是死状态」这条前提从「读代码推断」变成「量真实 DOM」：
+
+脚本 `.workbuddy-ai/shots/state-buttons.cjs`（headless Chrome + CDP，夹具逐场景注入，
+读的是按钮真实的 `disabled` 属性，不是源码）。为了让同一个页面能遍历全部场景，
+`src/dev/apply-fixture.ts` 增加了 dev-only 的 `window.__applyFixture` 入口——
+否则每个场景都要重启一次 dev server，遍历成本高到没人愿意跑。
+
+```
+场景            state 文案      连接可用  断开可用  可用按钮数  期望
+verified        出口已验证        true     true        2        可/可  ✓
+suspect         隧道已通          true     true        2        可/可  ✓
+connecting      重连中            false    false       0        禁/禁  ✓
+switching       切换服务器中      false    false       0        禁/禁  ✓
+disconnected    已断开            true     false       1        可/禁  ✓
+error           错误              true     false       1        可/禁  ✓
+
+=== DISCONNECTED 恢复路径（服务器页）===
+  「切回上一个」: {"present":true,"enabled":true,"text":"切回上一个（东京中转节点）"}
+```
+
+- `switching` 的**可用按钮数为 0** —— 这正是卡死缺陷的机制，在真实 DOM 上确认。
+- `disconnected` 有 1 个可用按钮，且「切回上一个」**存在且可用**，恢复路径成立。
+- 顺带实测到一个**既有行为**（非本次修复目标，仅记录）：已连接的两个状态里
+  「连接」按钮**仍可点**，点下去得到「已有连接在进行中」的明确报错，不会造成破坏。
+
+**夹具改动不影响已发布的安装包**（已用哈希验证）：`src/dev/` 只在
+`import.meta.env.DEV` + `VITE_LCFG_FIXTURE` 下被动态导入，生产构建整块摇掉。
+改动后重跑 `npm run build`，产物仍是 `index-Bb2FDCga.js` / `index-Dccyrqej.css`，
+与安装包内嵌的资源名逐字一致。
+
+> **诚实声明（这条修复到底验证到什么程度）**：
+> - ✅ 前端「`SWITCHING` 下两个按钮都禁用」与「`DISCONNECTED` 下仍有可用按钮、
+>   「切回上一个」可用」—— **已在真实 DOM 上实测**（见上表）。
+> - ✅ 后端「切换失败必须落到 `Disconnected`」—— **纯函数单元测试**覆盖。
+> - ❌ 「真机上走一遍：已连接 A → 切到未确认 Host Key 的 B → 界面仍可继续操作」
+>   这条完整链路**未验证**（需要双服务器环境），见 §5.8。
 
 ### 5.7 打包（0.3.0）
 
