@@ -156,7 +156,11 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_snapshot,
             commands::detect_ssh_env,
-            commands::save_server_config,
+            commands::save_server,
+            commands::delete_server,
+            commands::switch_server,
+            commands::test_servers,
+            commands::save_settings,
             commands::fetch_host_key,
             commands::confirm_host_key,
             commands::test_connection,
@@ -197,8 +201,11 @@ mod tests {
     #[test]
     fn initial_state_ready_when_configured() {
         let mut cfg = GatewayConfig::default();
-        cfg.server.host = "vps.example.com".into();
-        cfg.server.username = "ubuntu".into();
+        {
+            let s = cfg.active_server_mut().expect("默认配置应含一台服务器");
+            s.host = "vps.example.com".into();
+            s.username = "ubuntu".into();
+        }
         let m = GatewayStateMachine::new(cfg);
         assert_eq!(m.snapshot().state, GS::Ready);
     }

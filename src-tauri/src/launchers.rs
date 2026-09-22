@@ -116,7 +116,7 @@ pub fn build_preview(cfg: &GatewayConfig, bridge_port: Option<u16>) -> LaunchPre
             env.push(("HTTPS_PROXY".to_string(), http_proxy.clone()));
             env.push(("http_proxy".to_string(), http_proxy.clone()));
             env.push(("https_proxy".to_string(), http_proxy.clone()));
-            format!("HTTP CONNECT 桥接层 127.0.0.1:{} → SOCKS5 {}（远端 DNS）", port, cfg.server.socks_port)
+            format!("HTTP CONNECT 桥接层 127.0.0.1:{} → SOCKS5 {}（远端 DNS）", port, cfg.socks_port())
         }
         None => "桥接层未运行（不可启动）".to_string(),
     };
@@ -183,7 +183,7 @@ mod tests {
     #[test]
     fn preview_with_bridge_has_http_proxy() {
         let mut cfg = GatewayConfig::default();
-        cfg.server.socks_port = 17801;
+        cfg.settings.socks_port = 17801;
         let p = build_preview(&cfg, Some(18999));
         assert!(p.env.iter().any(|(k, v)| k == "HTTP_PROXY" && v == "http://127.0.0.1:18999"));
         assert!(p.env.iter().any(|(k, v)| k == "HTTPS_PROXY" && v == "http://127.0.0.1:18999"));

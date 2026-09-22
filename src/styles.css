@@ -111,6 +111,19 @@
   --info: #7b8cff;
   --info-soft: rgba(123, 140, 255, 0.12);
 
+  /* 语义色的「文字专用」变体。
+   *
+   * 为什么需要单独一套：`--ok` 这类色值是按「当背景/边框/图形」调的，
+   * 直接拿来写小号文字在浅色主题上会掉到 3.0–3.6:1，达不到 WCAG AA 的 4.5:1。
+   * 深色主题下这两套值相同（原本就达标）；浅色主题下 `-fg` 更深。
+   *
+   * 规则：`color:` 用 `-fg`；`background:` / `border-color:` / SVG 描边用原变量。 */
+  --accent-fg: var(--accent);
+  --ok-fg: var(--ok);
+  --warn-fg: var(--warn);
+  --err-fg: var(--err);
+  --info-fg: var(--info);
+
   /* 阴影 */
   --sh-1: 0 1px 2px rgba(0, 0, 0, 0.35);
   --sh-2: 0 2px 8px rgba(0, 0, 0, 0.35);
@@ -149,7 +162,10 @@
   /* 文字：四级强度（浅色下木炭灰更易读，避免纯黑刺眼） */
   --tx-1: #131722;
   --tx-2: #495366;
-  --tx-3: #67718a;
+  /* tx-3 用于次要说明文字。取值须在**所有**可能背景上 ≥4.5:1：
+   * 白底 5.41 / 页面底 5.00 / 侧栏琥珀底 4.90 / 高亮行 4.85。
+   * 原来的 #67718a 在琥珀底与高亮行上只有 4.42 / 4.38，差一点点。 */
+  --tx-3: #606a82;
   --tx-4: #98a2b3;
 
   --accent: #2f6fe4;
@@ -173,6 +189,23 @@
 
   --info: #5a6ae8;
   --info-soft: rgba(90, 106, 232, 0.09);
+
+  /* 文字专用语义色：浅色背景下必须比 `--ok` 等更深才够 4.5:1。
+   *
+   * 最苛刻的背景是「药丸自身半透明底色再合成到高亮行上」——比纯白低 1.0 左右。
+   * 实测四档背景（白底 / 页面底 #f4f6fa / 高亮行 #edf3fd / 药丸合成底色）：
+   *   ok     #0c7049  6.12 / 5.66 / 5.49 / 4.99
+   *   warn   #8a5708  6.09 / 5.63 / 5.46 / 4.98
+   *   err    #bf2b30  5.83 / 5.39 / 5.23 / 4.68
+   *   accent #265cbe  6.26 / 5.80 / 5.61 / 5.07
+   *   info   #4350c8  6.52 / 6.03 / 5.85 / 5.28
+   * 全部 ≥4.5。取值时按最苛刻那档卡线，避免「在白色卡片上没问题、
+   * 一进高亮行/药丸就掉下去」这种只在特定位置暴露的缺陷。 */
+  --accent-fg: #265cbe;
+  --ok-fg: #0c7049;
+  --warn-fg: #8a5708;
+  --err-fg: #bf2b30;
+  --info-fg: #4350c8;
 
   --sh-1: 0 1px 2px rgba(19, 23, 34, 0.06);
   --sh-2: 0 2px 8px rgba(19, 23, 34, 0.07);
@@ -375,7 +408,7 @@ textarea {
 
 .tab.active {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-fg);
   font-weight: 600;
 }
 
@@ -856,22 +889,22 @@ label.field > select {
 
 .status-pill.ok {
   background: var(--ok-soft);
-  color: var(--ok);
+  color: var(--ok-fg);
   border-color: var(--ok-line);
 }
 .status-pill.warn {
   background: var(--warn-soft);
-  color: var(--warn);
+  color: var(--warn-fg);
   border-color: var(--warn-line);
 }
 .status-pill.err {
   background: var(--err-soft);
-  color: var(--err);
+  color: var(--err-fg);
   border-color: var(--err-line);
 }
 .status-pill.info {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-fg);
   border-color: var(--accent-line);
 }
 
@@ -960,10 +993,10 @@ label.field > select {
   word-break: break-all;
 }
 .logbox .e {
-  color: var(--err);
+  color: var(--err-fg);
 }
 .logbox .w {
-  color: var(--warn);
+  color: var(--warn-fg);
 }
 
 /* ---- 表格 ---- */
@@ -1032,19 +1065,19 @@ table.tbl tbody tr:hover {
   background: var(--tx-4);
 }
 .flag.ok {
-  color: var(--ok);
+  color: var(--ok-fg);
 }
 .flag.ok::before {
   background: var(--ok);
 }
 .flag.err {
-  color: var(--err);
+  color: var(--err-fg);
 }
 .flag.err::before {
   background: var(--err);
 }
 .flag.warn {
-  color: var(--warn);
+  color: var(--warn-fg);
 }
 .flag.warn::before {
   background: var(--warn);
@@ -1135,13 +1168,13 @@ table.tbl tbody tr:hover {
   word-break: normal;
 }
 .stat-value.accent {
-  color: var(--accent);
+  color: var(--accent-fg);
 }
 .stat-value.ok {
-  color: var(--ok);
+  color: var(--ok-fg);
 }
 .stat-value.err {
-  color: var(--err);
+  color: var(--err-fg);
 }
 .stat-value.dim {
   color: var(--tx-3);
@@ -1246,12 +1279,12 @@ table.tbl tbody tr:hover {
 }
 .step-mark.ok {
   background: var(--ok-soft);
-  color: var(--ok);
+  color: var(--ok-fg);
   border: 1px solid var(--ok-line);
 }
 .step-mark.err {
   background: var(--err-soft);
-  color: var(--err);
+  color: var(--err-fg);
   border: 1px solid var(--err-line);
 }
 .step-body {

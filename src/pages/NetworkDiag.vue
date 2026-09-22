@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import type { DiagReport, DiagStatus, RoutingStatus, ClientDiag, PathHop, DiagItem } from "../types/diag";
+import { store, initStore, activeServer } from "../stores/gateway";
 
 const report = ref(null as DiagReport | null);
 const running = ref(false);
@@ -18,6 +19,10 @@ const expectedIp = ref("");
 const expectedMsg = ref("");
 
 onMounted(async () => {
+  await initStore();
+  // 预填当前选中服务器的预期出口 IP（每台各自一份）
+  const s = activeServer(store.snapshot?.config);
+  if (s?.expected_egress_ip) expectedIp.value = s.expected_egress_ip;
   await loadLast();
 });
 
@@ -70,7 +75,11 @@ async function diagnoseOne(kind: string) {
 async function saveExpectedIp() {
   expectedMsg.value = "";
   try {
-    expectedMsg.value = await invoke<string>("set_expected_egress_ip", { ip: expectedIp.value.trim() || null });
+    // 预期出口 IP 是**每台服务器**各自的字段；空 serverId 表示作用于当前选中项
+    expectedMsg.value = await invoke<string>("set_expected_egress_ip", {
+      serverId: "",
+      ip: expectedIp.value.trim() || null,
+    });
     await runDiag();
   } catch (e) {
     expectedMsg.value = String(e);
@@ -318,6 +327,10 @@ function hopStyle(h: PathHop): DiagStatus {
         出口 IP 检测要求（需求文档 §3.2）：代理出口必须显式指定 SOCKS5 + 远端 DNS，
         绝不把服务器地址当已验证出口。
       </div>
+      <p class="muted" style="margin-top: 10px">
+        该字段属于<b>每台服务器</b>各自一份（不同出口的预期 IP 本就不同）。
+        这里编辑的是<b>当前选中</b>的那台：<span class="mono">{{ activeServer(store.snapshot?.config)?.name || activeServer(store.snapshot?.config)?.host || "无" }}</span>
+      </p>
       <div class="row form" style="margin-top: 12px">
         <label class="field">预期出口 IP（空 = 不校验；填入后诊断会做匹配判定）
           <input type="text" v-model="expectedIp" placeholder="如 1.2.3.4" />

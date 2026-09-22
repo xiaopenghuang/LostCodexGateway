@@ -42,7 +42,9 @@
 ## 3. 模块设计
 
 ### 3.1 `config`（P0）
-- `config.json`：server（host/port/user/key_path/socks_port/ssh_exe_path）、verify（端点列表、超时）、settings（自动重连开关、断线策略）、mihomo（检测缓存，不含 secret）。
+- `config.json`：`servers[]`（每台含 id / name / host / port / username / key_path / ssh_exe_path / expected_egress_ip / gateway_group）、`active_server_id`、`verify`（端点列表、超时）、`settings`（全局 `socks_port` 与 `bridge_port`、自动重连开关、断线策略）。
+
+  两个本地端口是**全局设置**而不是服务器字段，这是刻意的类型约束：端口若留在 per-server 上，改一台就会破坏「切换后地址不变」这个前提，下游 Codex CLI 的 `HTTP_PROXY` 会指向空气。v0.2.0 的扁平 `server` 结构由 `GatewayConfig::parse_json` 自动迁移（含 `verify.expected_egress_ip` → 服务器、`server.socks_port` → 全局设置两处字段搬家）。
 - 原子写：写临时文件 → rename；写前复制 `config.json.bak_<yyyyMMdd_HHmmss>`；读失败回退最近备份并提示。
 - **私钥只存路径字符串，永不读取/复制内容。**
 
@@ -95,9 +97,35 @@ UNCONFIGURED → READY → CONNECTING → TUNNEL_READY → EGRESS_VERIFIED
                         ↘ ERROR / DISCONNECTED
 EGRESS_VERIFIED → DEGRADED（出口复检失败）→ RECONNECTING（≤3 次）
 所有状态 → DISCONNECTING → READY
+EGRESS_VERIFIED/TUNNEL_READY/… → SWITCHING → CONNECTING（切换服务器）
 ```
 - 事件：`state_changed`、`log`（脱敏）、`verify_result`、`process_found`。
 - 断线策略默认：立刻 `DISCONNECTED`、停止接受新 CLI 启动、不触碰用户其他配置。
+
+#### 3.6.1 多服务器切换（v0.3.0）
+
+**切换，不是同时。** 任一时刻只有一条隧道，`active_server_id` 指向当前那一台。
+这一选择带来的最大收益是**串台风险结构性消失**：同时连多台时，`generation` 之类的
+「让旧任务自杀」机制一旦有缝隙，就可能出现「监控任务把 A 的断线判定写进 B 的状态」；
+单隧道模型下不存在第二个隧道，也就没有可串的对象。
+
+三个刻意的取舍：
+
+| 决策 | 选择 | 理由 |
+|---|---|---|
+| 优雅切（新隧道验证通过再断旧的）？ | **不做** | 单端口模型下做不到：`socks_port` 全局固定，两条隧道不能同时绑同一端口。要支持就得引入第二组端口，收益不抵复杂度。代价是切换瞬间正在跑的请求会断 |
+| 切换失败自动回滚？ | **不回滚** | 回滚意味着「切到一台坏的，结果又悄悄切回来」，用户看到的是「点了切换但没变」，比明确报错更难排查。改为如实报错 + 记录 `previous_server_id`，前端给「切回上一个」按钮 |
+| 未连接时切换要不要顺手连上？ | **不连** | 用户只是浏览/预选服务器时不该被动建隧道 |
+
+实现要点：
+- 端口与服务器在**连接发起时一次性快照**，后台重连只回同一台、同一端口。
+  `generation` 已经保证旧监控任务自杀；快照让「旧任务即便读到也不会连错」
+  这件事不依赖单一机制。
+- `switch_server` 的流程是「标记 `SWITCHING` → `disconnect_impl` → 改
+  `active_server_id` 并落盘 → `connect_impl`」，与 `connect` 共用同一实现，
+  因此不存在「切换走的代码路径和普通连接不一致」的可能。
+- 隧道运行期间**拒绝修改全局端口**（`save_settings` 里判定）：正在跑的桥接层
+  仍绑在旧端口上，配置先行改掉会让下游 CLI 连到「配置说有、实际没有」的地址。
 
 ## 4. 测试策略（按文档第 10 节矩阵）
 

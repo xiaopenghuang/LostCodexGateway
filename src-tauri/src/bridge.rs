@@ -144,13 +144,29 @@ impl Default for BridgeStats {
     }
 }
 
-/// 启动桥接器：绑定 127.0.0.1:0（随机端口），返回 (实际端口, 任务句柄, 统计)。
+/// 启动桥接器：绑定 `127.0.0.1:<preferred_port>`，返回 (实际端口, 任务句柄, 统计)。
+///
+/// 端口必须**固定**：Codex CLI 的 `HTTP_PROXY` 指向它，而多服务器切换会重启
+/// 桥接层——若端口随机变化，下游客户端就会指向一个已经没人监听的地址。
+/// 指定端口被占用时**如实报错，不静默换端口**：悄悄换端口等于悄悄破坏下游配置，
+/// 用户会看到「连接成功」但 CLI 走不通，那是最难排查的一类故障。
 pub async fn start_bridge(
     socks_port: u16,
+    preferred_port: u16,
 ) -> Result<(u16, tokio::task::JoinHandle<()>, BridgeStats), String> {
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .map_err(|e| format!("桥接层绑定失败: {}", e))?;
+    // preferred_port == 0 表示「随机端口」，仅用于测试或明确不需要固定入口的场景。
+    // 生产路径由 config.settings.bridge_port 提供固定值——下游 HTTP_PROXY 依赖它。
+    let addr = if preferred_port == 0 {
+        "127.0.0.1:0".to_string()
+    } else {
+        format!("127.0.0.1:{}", preferred_port)
+    };
+    let listener = TcpListener::bind(&addr).await.map_err(|e| {
+        format!(
+            "桥接层无法绑定 {}（{}）。该端口需固定不变，请释放它或修改「桥接端口」设置",
+            addr, e
+        )
+    })?;
     let port = listener
         .local_addr()
         .map_err(|e| e.to_string())?

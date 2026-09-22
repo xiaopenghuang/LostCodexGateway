@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import {
-  store, initStore, connect, disconnect, stateLabel, stateKind,
+  store, initStore, connect, disconnect, stateLabel, stateKind, activeServer,
 } from "../stores/gateway";
 
 defineEmits<{ (e: "go-server"): void }>();
@@ -9,9 +9,16 @@ defineEmits<{ (e: "go-server"): void }>();
 const snap = computed(() => store.snapshot);
 const state = computed(() => snap.value?.state);
 const verify = computed(() => snap.value?.last_verify);
-const configured = computed(() => !!snap.value?.config?.server?.host);
+const cfg = computed(() => snap.value?.config ?? null);
+/** 当前选中的服务器（多服务器下「已配置」= 当前选中那台填完了） */
+const active = computed(() => activeServer(cfg.value));
+const configured = computed(() => !!active.value?.host && !!active.value?.username);
 
-/** 是否处于「可断开」的活跃态。 */
+/** 是否处于「可断开」的活跃态。
+ *
+ * 只包含**已稳定**的活跃态：连接中 / 重连中 / 切换中不算——那几秒里点「断开」
+ * 会和正在进行中的流程抢同一批资源（generation、子进程、端口），
+ * 属于「按钮点了但结果不可预期」，不如先禁用。 */
 const canDisconnect = computed(() =>
   state.value === "EGRESS_VERIFIED"
   || state.value === "TUNNEL_READY"
@@ -21,7 +28,8 @@ const canDisconnect = computed(() =>
 const busy = computed(() =>
   state.value === "CONNECTING"
   || state.value === "RECONNECTING"
-  || state.value === "DISCONNECTING",
+  || state.value === "DISCONNECTING"
+  || state.value === "SWITCHING",
 );
 
 const directIp = computed(
@@ -98,6 +106,9 @@ onMounted(async () => {
             <template v-else-if="state === 'TUNNEL_READY'">
               隧道已建立，但出口尚未通过实测验证。
             </template>
+            <template v-else-if="state === 'SWITCHING'">
+              正在切换服务器：先断开旧隧道，再用新服务器重连。正在进行的请求会中断。
+            </template>
             <template v-else-if="busy">正在处理，请稍候…</template>
             <template v-else-if="state === 'DEGRADED'">隧道可用但出口验证未通过，请查看下方步骤。</template>
             <template v-else-if="state === 'ERROR'">连接出错，详情见下方日志或「日志与导出」页。</template>
@@ -119,18 +130,22 @@ onMounted(async () => {
       <template v-if="configured">
         <div class="stat-grid">
           <div class="stat">
-            <span class="stat-label">目标服务器</span>
-            <span class="stat-value">{{ snap?.config?.server?.server_name || "（未命名）" }}</span>
+            <span class="stat-label">当前服务器</span>
+            <span class="stat-value">{{ active?.name || active?.host || "（未命名）" }}</span>
           </div>
           <div class="stat">
             <span class="stat-label">地址</span>
-            <span class="stat-value">{{ snap?.config?.server?.username }}@{{ snap?.config?.server?.host }}:{{ snap?.config?.server?.port }}</span>
+            <span class="stat-value">{{ active?.username }}@{{ active?.host }}:{{ active?.port }}</span>
           </div>
           <div class="stat">
             <span class="stat-label">本地 SOCKS 端口</span>
-            <span class="stat-value">127.0.0.1:{{ snap?.config?.server?.socks_port }}</span>
+            <span class="stat-value">127.0.0.1:{{ cfg?.settings?.socks_port }}</span>
           </div>
         </div>
+        <p class="muted" style="margin-top: 10px">
+          共 {{ cfg?.servers?.length ?? 0 }} 台服务器；本地端口为全局设置，切换服务器时不变。
+          到「服务器」页可切换当前出口。
+        </p>
       </template>
 
       <template v-else>

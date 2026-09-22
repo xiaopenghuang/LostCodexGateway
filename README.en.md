@@ -8,7 +8,7 @@
 
 One click to bring up an SSH SOCKS5 tunnel so selected client traffic leaves from your server. No API forwarding, no decryption, no rewriting.
 
-[![Release](https://img.shields.io/badge/release-v0.2.0-2ea44f?style=flat-square)](../../releases)
+[![Release](https://img.shields.io/badge/release-v0.3.0-2ea44f?style=flat-square)](../../releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078d4?style=flat-square)](#requirements)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2.x-24c8db?style=flat-square)](https://tauri.app)
@@ -58,6 +58,8 @@ LostCodexGateway packages this into a small tray-resident utility: enter your se
 | Feature | Description |
 |---|---|
 | **SSH SOCKS5 tunnel** | Uses the built-in Windows OpenSSH (`ssh.exe -D`). Arguments are passed as an array — no shell string interpolation, no injection surface |
+| **Multi-server switching** | Save any number of servers and switch the active egress with one click. Switching is a hard cut (disconnect → reconnect); failures are not auto-rolled-back, but a "switch back to previous" button is provided. Local ports are global and fixed, so switching is transparent to the Codex CLI |
+| **Latency probe** | Concurrent TCP probes across all servers, honestly labelled as "round-trip to the SSH port" — **not** egress latency |
 | **Host key verification** | Queries the server fingerprint for manual comparison; **blocks the connection if the fingerprint changes**. Backs up `known_hosts` before writing |
 | **Egress verification** | Port listening + remote DNS resolution through SOCKS + egress IP echo (multi-endpoint with fallback, timestamped). All three judged independently |
 | **HTTP CONNECT → SOCKS5 bridge** | Binds `127.0.0.1` only. No TLS interception, no caching, no root certificate. Target blacklist blocks loopback/private ranges to prevent proxy loops |
@@ -140,8 +142,8 @@ LostCodexGateway packages this into a small tray-resident utility: enter your se
 
 ## Quick Start
 
-1. **Install**: download `LostCodexGateway_0.2.0_x64-setup.exe` and run it. Standard user privileges are sufficient — no administrator needed.
-2. **Enter server details**: open the app → "Server" page → fill in host, SSH port, username, private key path, and local SOCKS port (default `17801`; you'll be prompted if it's in use).
+1. **Install**: download `LostCodexGateway_0.3.0_x64-setup.exe` and run it. Standard user privileges are sufficient — no administrator needed.
+2. **Enter server details**: open the app → "Server" page → "Add server" → fill in a name, host, SSH port, username and private key path. You can save several servers and switch the active egress at any time (switching is a hard cut: the old tunnel is torn down before the new one is built, so in-flight requests are interrupted). The local SOCKS port (default `17801`) and bridge port (default `17800`) are **global settings**, edited on the "Settings" page.
 3. **Verify the fingerprint**: click "Query server fingerprint" → **compare it with your server administrator** (or against a fingerprint you already know) → confirm with "I've verified it, write it".
 4. **Connect**: on the "Home" page click "Connect" → status becomes **Verified**, and the page shows the egress IP along with each verification step.
 5. **Launch Codex**: "Apps" page → "Launch Codex CLI from gateway" → a separate terminal window opens with the proxy injected into that terminal only.

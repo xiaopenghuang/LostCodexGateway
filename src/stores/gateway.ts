@@ -2,8 +2,8 @@ import { reactive } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
-  GatewaySnapshot, GatewayState, HostKeyInfo, SshEnv,
-  LaunchPreview, LaunchResult, LogEntry,
+  GatewaySnapshot, GatewayState, GatewayConfig, HostKeyInfo, SshEnv,
+  LaunchPreview, LaunchResult, LogEntry, ServerLatency, ServerProfile,
 } from "../types";
 
 export const store = reactive({
@@ -11,6 +11,9 @@ export const store = reactive({
   hostKey: null as HostKeyInfo | null,
   sshEnv: null as SshEnv | null,
   launchPreview: null as LaunchPreview | null,
+  /** 最近一次服务器延迟探测结果（key = 服务器 id） */
+  latencies: {} as Record<string, ServerLatency>,
+  latencyTesting: false,
   logs: [] as LogEntry[],
   initError: null as string | null,
   inBrowser: false,
@@ -43,8 +46,61 @@ export async function initStore(): Promise<void> {
   }
 }
 
-export async function saveServer(config: Record<string, unknown>): Promise<string> {
-  return invoke<string>("save_server_config", { config });
+/** 当前选中的服务器（配置里查不到时返回 null，UI 需容忍）。 */
+export function activeServer(cfg: GatewayConfig | null | undefined): ServerProfile | null {
+  if (!cfg) return null;
+  return cfg.servers.find((s) => s.id === cfg.active_server_id) ?? null;
+}
+
+/**
+ * 保存一台服务器。
+ * - `id` 为空 → 后端新增并自动设为当前选中
+ * - `id` 非空 → 按 id 更新
+ */
+export async function saveServer(server: Partial<ServerProfile>): Promise<string> {
+  return invoke<string>("save_server", { server });
+}
+
+/** 删除一台服务器；若删的正是当前连接中的那台，后端会先干净断开。 */
+export async function deleteServer(id: string): Promise<string> {
+  return invoke<string>("delete_server", { id });
+}
+
+/**
+ * 切换到另一台服务器（硬切：断开 → 改选中 → 重连）。
+ * 失败不回滚：后端会如实报错并保留 `previous_server_id`，用户可一键切回。
+ */
+export async function switchServer(id: string): Promise<string> {
+  return invoke<string>("switch_server", { id });
+}
+
+/** 对所有服务器做只读延迟探测（并发，5s 超时）。不是出口延迟。 */
+export async function testServers(): Promise<ServerLatency[]> {
+  store.latencyTesting = true;
+  try {
+    const list = await invoke<ServerLatency[]>("test_servers");
+    const map: Record<string, ServerLatency> = {};
+    for (const item of list) map[item.id] = item;
+    store.latencies = map;
+    return list;
+  } finally {
+    store.latencyTesting = false;
+  }
+}
+
+/** 保存全局设置（本地端口 + 重连策略）。隧道运行期间后端会拒绝改端口。 */
+export async function saveSettings(payload: {
+  socks_port: number;
+  bridge_port: number;
+  auto_reconnect: boolean;
+  max_reconnect_attempts: number;
+}): Promise<string> {
+  return invoke<string>("save_settings", payload);
+}
+
+/** 配置某台服务器的预期出口 IP（`serverId` 为空则作用于当前选中项）。 */
+export async function setExpectedEgressIp(serverId: string, ip: string | null): Promise<string> {
+  return invoke<string>("set_expected_egress_ip", { serverId, ip });
 }
 
 export async function connect(): Promise<string> {
@@ -100,6 +156,7 @@ export const stateLabel = (s: GatewayState | undefined): string => {
     case "RECONNECTING": return "重连中";
     case "DISCONNECTING": return "断开中";
     case "DISCONNECTED": return "已断开";
+    case "SWITCHING": return "切换服务器中";
     case "ERROR": return "错误";
     default: return "未知";
   }
@@ -109,8 +166,13 @@ export const stateKind = (s: GatewayState | undefined): "ok" | "warn" | "err" | 
   switch (s) {
     case "EGRESS_VERIFIED": return "ok";
     case "TUNNEL_READY": return "info";
-    case "CONNECTING": case "RECONNECTING": case "DISCONNECTING": return "warn";
+    case "CONNECTING": case "RECONNECTING": case "DISCONNECTING": case "SWITCHING": return "warn";
     case "DEGRADED": case "ERROR": case "DISCONNECTED": return "err";
     default: return "info";
   }
 };
+
+/** 隧道处于活跃期（有或即将有本工具创建的 ssh 子进程）。 */
+export const tunnelIsActive = (s: GatewayState | undefined): boolean =>
+  s === "CONNECTING" || s === "TUNNEL_READY" || s === "EGRESS_VERIFIED" ||
+  s === "DEGRADED" || s === "RECONNECTING" || s === "SWITCHING";

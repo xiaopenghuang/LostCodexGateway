@@ -7,7 +7,7 @@
 import { store } from "../stores/gateway";
 import { invoke } from "@tauri-apps/api/core";
 import {
-  fixtureSnapshot, SSH_ENV, HOST_KEY, LAUNCH_PREVIEW,
+  fixtureSnapshot, SCENARIO_NAMES, SSH_ENV, HOST_KEY, LAUNCH_PREVIEW, LATENCIES,
   MIHOMO, WSL_DETECTION, WSL_CMD, DIAG_REPORT,
 } from "./fixtures";
 
@@ -18,8 +18,18 @@ function fakeInvoke(cmd: string, args?: Record<string, unknown>): unknown {
       return store.snapshot;
     case "detect_ssh_env":
       return SSH_ENV;
-    case "save_server_config":
-      return "配置已保存（假数据，仅用于视觉检查）";
+    case "save_server":
+      return "已保存服务器（假数据，仅用于视觉检查）";
+    case "delete_server":
+      return "已删除服务器（假数据）";
+    case "switch_server":
+      return "已切换到目标服务器（假数据）";
+    case "test_servers":
+      // 同步写进 store，让列表里的延迟列有东西可渲染
+      for (const l of LATENCIES) store.latencies[l.id] = l;
+      return LATENCIES;
+    case "save_settings":
+      return "已保存设置（假数据）";
     case "test_connection":
       return "连接成功：SSH 握手通过，SOCKS5 转发可用（假数据）";
     case "connect":
@@ -73,7 +83,7 @@ export function applyFixture(name: string): void {
   const snap = fixtureSnapshot(name);
   if (!snap) {
     console.error(
-      `[fixture] 未知场景 "${name}"。可用：verified / suspect / connecting / error`
+      `[fixture] 未知场景 "${name}"。可用：${SCENARIO_NAMES.join(" / ")}`
     );
     return;
   }

@@ -9,7 +9,7 @@
  *   VITE_LCFG_FIXTURE=verified npm run dev:fixture
  */
 import type {
-  GatewaySnapshot, HostKeyInfo, SshEnv, LaunchPreview, LogEntry,
+  GatewaySnapshot, GatewayConfig, HostKeyInfo, SshEnv, LaunchPreview, LogEntry, ServerLatency,
 } from "../types";
 
 const now = () => new Date().toISOString().replace("T", " ").slice(0, 19);
@@ -21,22 +21,58 @@ function logs(): LogEntry[] {
     { ts: t, level: "info", component: "ssh", message: "使用系统 OpenSSH: C:\\Windows\\System32\\OpenSSH\\ssh.exe (OpenSSH_for_Windows_9.5p1)" },
     { ts: t, level: "info", component: "tunnel", message: "本地 SOCKS5 监听已就绪 127.0.0.1:17801（动态端口转发 -D）" },
     { ts: t, level: "warn", component: "verify", message: "出口 IP 与本机直连相同，无法确认流量确实经由服务器" },
-    { ts: t, level: "info", component: "bridge", message: "HTTP CONNECT 桥接层已启动 127.0.0.1:17802 → SOCKS5 远端 DNS" },
+    { ts: t, level: "info", component: "bridge", message: "HTTP CONNECT 桥接层已启动 127.0.0.1:17800 → SOCKS5 远端 DNS" },
     { ts: t, level: "error", component: "bridge", message: "拒绝目标 192.168.1.1:80（BRIDGE_PRIVATE_TARGET，私有网段不经隧道转发）" },
     { ts: t, level: "info", component: "verify", message: "出口验证完成：3/4 项通过，耗时 4820ms" },
   ];
 }
 
-const CONFIG = {
-  server: {
-    host: "vps.example.com",
-    port: 22,
-    username: "ubuntu",
-    key_path: "C:\\Users\\me\\.ssh\\id_ed25519",
-    socks_port: 17801,
-    ssh_exe_path: "C:\\Windows\\System32\\OpenSSH\\ssh.exe",
-    server_name: "东京中转节点",
-  },
+/**
+ * 多服务器配置（v0.3.0）。
+ *
+ * 刻意包含三种状态各一台，用来暴露列表的布局问题：
+ * - 正常条目
+ * - 名称超长（检查列宽挤压）
+ * - 主机名超长（检查 mono 溢出）
+ * 端口是全局的（`settings`），不在任何一台服务器上。
+ */
+const CONFIG: GatewayConfig = {
+  servers: [
+    {
+      id: "srv-1a2b3c",
+      name: "东京中转节点",
+      host: "vps.example.com",
+      port: 22,
+      username: "ubuntu",
+      key_path: "C:\\Users\\me\\.ssh\\id_ed25519",
+      ssh_exe_path: "C:\\Windows\\System32\\OpenSSH\\ssh.exe",
+      expected_egress_ip: "203.0.113.47",
+      gateway_group: "MY-VPS",
+    },
+    {
+      id: "srv-4d5e6f",
+      name: "备用出口（新加坡，用于主节点故障时切换）",
+      host: "sg-backup-very-long-hostname.example.net",
+      port: 2222,
+      username: "root",
+      key_path: "C:\\Users\\me\\.ssh\\id_ed25519_sg",
+      ssh_exe_path: "",
+      expected_egress_ip: "198.51.100.88",
+      gateway_group: "MY-VPS",
+    },
+    {
+      id: "srv-7a8b9c",
+      name: "",
+      host: "203.0.113.200",
+      port: 22,
+      username: "deploy",
+      key_path: "",
+      ssh_exe_path: "",
+      expected_egress_ip: "",
+      gateway_group: "MY-VPS",
+    },
+  ],
+  active_server_id: "srv-1a2b3c",
   verify: {
     // 故意给一个很长的 URL，检查长文本换行/溢出
     endpoints: [
@@ -44,16 +80,23 @@ const CONFIG = {
       "https://ifconfig.me/ip",
     ],
     timeout_secs: 8,
-    expected_egress_ip: "203.0.113.47",
   },
   settings: {
     auto_reconnect: true,
     max_reconnect_attempts: 3,
     disconnect_policy: "warn_and_block",
-    proxy_mode: "socks5_remote_dns",
+    socks_port: 17801,
+    bridge_port: 17800,
     gateway_group: "MY-VPS",
   },
 };
+
+/** 延迟探测的样例结果（含「不可达」与「超长耗时」两种边界）。 */
+export const LATENCIES: ServerLatency[] = [
+  { id: "srv-1a2b3c", name: "东京中转节点", host: "vps.example.com", port: 22, reachable: true, latency_ms: 42, error: null },
+  { id: "srv-4d5e6f", name: "备用出口（新加坡，用于主节点故障时切换）", host: "sg-backup-very-long-hostname.example.net", port: 2222, reachable: true, latency_ms: 386, error: null },
+  { id: "srv-7a8b9c", name: "203.0.113.200", host: "203.0.113.200", port: 22, reachable: false, latency_ms: null, error: "超时（5s）" },
+];
 
 const VERIFY_OK = {
   ok: true,
@@ -113,15 +156,16 @@ const SCENARIOS: Record<string, GatewaySnapshot> = {
     ssh_pid: 24316,
     last_error: null,
     recent_logs: logs(),
-    bridge_port: 17802,
+    bridge_port: 17800,
     bridge_connections_total: 1284,
     bridge_last_target: "chatgpt.com:443",
     bridge_rejects_total: 3,
     bridge_recent_rejects: [
       { code: "BRIDGE_PRIVATE_TARGET", message: "私有网段不经隧道转发", target: "192.168.1.1:80" },
       { code: "BRIDGE_LOOPBACK_TARGET", message: "回环地址不经隧道转发", target: "127.0.0.1:8080" },
-      { code: "BRIDGE_SELF_TARGET", message: "目标为桥接层自身端口，会形成循环代理", target: "127.0.0.1:17802" },
+      { code: "BRIDGE_SELF_TARGET", message: "目标为桥接层自身端口，会形成循环代理", target: "127.0.0.1:17800" },
     ],
+    previous_server_id: null,
   },
 
   /** 隧道通但出口可疑：hero 琥珀色 + egressSuspect 告警 */
@@ -132,13 +176,14 @@ const SCENARIOS: Record<string, GatewaySnapshot> = {
     ssh_pid: 24316,
     last_error: null,
     recent_logs: logs(),
-    bridge_port: 17802,
+    bridge_port: 17800,
     bridge_connections_total: 47,
     bridge_last_target: "api.openai.com:443",
     bridge_rejects_total: 1,
     bridge_recent_rejects: [
       { code: "BRIDGE_LOOPBACK_TARGET", message: "回环地址不经隧道转发", target: "127.0.0.1:8080" },
     ],
+    previous_server_id: null,
   },
 
   /** 连接中：脉冲动画 + 长错误文案 */
@@ -154,6 +199,26 @@ const SCENARIOS: Record<string, GatewaySnapshot> = {
     bridge_last_target: null,
     bridge_rejects_total: 0,
     bridge_recent_rejects: [],
+    previous_server_id: null,
+  },
+
+  /**
+   * 切换服务器中：SWITCHING 状态 + 已选中的是第二台 + previous_server_id 指向第一台。
+   * 用来检查「切换中」文案、切回按钮、以及当前项高亮是否落在新服务器上。
+   */
+  switching: {
+    state: "SWITCHING",
+    config: { ...CONFIG, active_server_id: "srv-4d5e6f" },
+    last_verify: null,
+    ssh_pid: null,
+    last_error: null,
+    recent_logs: logs().slice(0, 5),
+    bridge_port: null,
+    bridge_connections_total: 0,
+    bridge_last_target: null,
+    bridge_rejects_total: 0,
+    bridge_recent_rejects: [],
+    previous_server_id: "srv-1a2b3c",
   },
 
   /** 错误态：超长错误信息，检查溢出 */
@@ -171,6 +236,7 @@ const SCENARIOS: Record<string, GatewaySnapshot> = {
     bridge_last_target: null,
     bridge_rejects_total: 0,
     bridge_recent_rejects: [],
+    previous_server_id: null,
   },
 };
 

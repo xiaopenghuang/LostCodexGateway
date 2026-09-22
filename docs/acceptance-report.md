@@ -305,3 +305,141 @@ src-tauri/target/release/bundle/nsis/LostCodexGateway_0.1.0_x64-setup.exe  (2.86
 - GUI e2e（CDP 驱动真实窗口）：配置→指纹→连接→EGRESS_VERIFIED→断开→诊断导出，全通过
 - M2 CLI 实测：真实 codex doctor 经桥接 4 条 CONNECT（persistent.oaistatic.com:443）
 - 安装/卸载：全通过
+
+---
+
+## 多服务器切换（v0.3.0，2026-09-21）
+
+> 需求原话：「是切换，不是同时，就像 clash 中切换节点一样。」
+> 本文只记录**实际跑过的**验证。真机端到端（两台真实服务器）**尚未做**，见文末。
+
+### 5.1 后端（Rust）
+
+```
+$ cargo test
+test result: ok. 76 passed; 0 failed   (lib)
+test result: ok.  4 passed; 0 failed; 1 ignored  (bridge_e2e)
+test result: ok.  0 passed; 0 failed; 9 ignored  (tunnel_e2e 5 + diag_e2e 4，均需 Docker 夹具)
+```
+
+`cargo check --all-targets` 零警告零错误。
+
+新增/改写的单元测试（72 → 76）：
+
+| 测试 | 断言的不变量 |
+|---|---|
+| `switching_servers_keeps_local_ports` | 来回切换后 `socks_port` / `bridge_port` **一个字节都不变**（这是「切换对 CLI 透明」的前提） |
+| `rename_and_host_change_preserve_id` | 改名 + 改主机后 `id` 不变，`active_server_id` 不悬空 |
+| `expected_egress_ip_is_per_server` | 预期出口 IP 各自独立，改一台不污染另一台；序列化往返后仍独立 |
+| `removing_active_server_falls_back_to_existing` | 删当前项后选中项落到真实存在的服务器；删到最后一台时列表不被删空 |
+| `migrates_legacy_single_server_config` | v0.2.0 扁平 `server` 无损迁移，含两处字段搬家 |
+| `legacy_proxy_mode_is_dropped` | 死字段 `proxy_mode` 不再出现在新配置里 |
+| `legacy_invalid_socks_port_is_rejected` | 旧配置里 <1024 的端口回落到默认值 |
+| `new_format_repairs_dangling_active_id` | 新格式里 `active_server_id` 指向已删除项时自动落到第一台 |
+
+### 5.2 配置迁移实测
+
+用真实的 v0.2.0 配置形状（扁平 `server` + `verify.expected_egress_ip` +
+`server.socks_port` + `settings.proxy_mode`）喂给 `parse_json`：
+
+| 迁移前 | 迁移后 | 结果 |
+|---|---|---|
+| `server.host/port/username/key_path` | `servers[0]` 同名字段 | ✅ |
+| `server.server_name` | `servers[0].name` | ✅ |
+| `server.socks_port: 18999` | `settings.socks_port: 18999` | ✅ |
+| `verify.expected_egress_ip` | `servers[0].expected_egress_ip` | ✅ |
+| `settings.proxy_mode` | 丢弃 | ✅ |
+
+### 5.3 前端
+
+```
+$ npm run build
+✓ 33 modules transformed.
+dist/assets/index-Dccyrqej.css   20.57 kB │ gzip:  5.00 kB
+dist/assets/index-D--l_9fa.js   132.36 kB │ gzip: 48.25 kB
+✓ built in 2.44s
+```
+
+`vue-tsc --noEmit` 通过（类型定义与 Rust 端字段严格对齐）。
+
+**开发夹具未进生产构建**（逐个标记核对，`grep -o <标记> dist/…js | wc -l`）：
+
+| 夹具唯一标记 | 产物中出现次数 |
+|---|---|
+| `sg-backup-very-long-hostname` | 0 |
+| `203.0.113.200` | 0 |
+| `203.0.113.47` | 0 |
+| `198.51.100.88` | 0 |
+| `备用出口（新加坡` | 0 |
+| `东京中转节点` | 1 ← 这是「显示名称」输入框的 placeholder，不是夹具数据 |
+
+### 5.4 视觉验证（headless Chrome + CDP，非真机窗口）
+
+场景：`VITE_LCFG_FIXTURE=switching`（3 台服务器，含超长名称、超长主机名、
+不可达项、`previous_server_id` 已设置），深浅两主题各截 3 张。
+
+**用测量代替目测**（脚本内 `getBoundingClientRect` 遍历）：
+
+| 指标 | 实测 | 判定 |
+|---|---|---|
+| 表格横向溢出 | 0 px | ✅ |
+| 卡片内溢出元素 | 0 个 | ✅ |
+| 文档横向滚动 | 1344 = 1344 | ✅ |
+| 操作列按钮垂直中心 vs 行中心 | 0 / 0 / 0 px | ✅ 对齐 |
+
+行高 50 / 70 / 50 px —— 第二行因名称换行变高，属预期。
+
+### 5.5 对比度实测（WCAG 2.1，浏览器内算真实生效色）
+
+不改 CSS 变量取值靠猜，而是在页面里读 `getComputedStyle`，把半透明背景
+沿祖先链逐层合成后计算比值。
+
+**修复前**（7 项不达标）：
+
+| 元素 | 主题 | 比值 | 要求 |
+|---|---|---|---|
+| 延迟-快 | light | 3.62 | 4.5 |
+| 延迟-慢 | light | 3.07 | 4.5 |
+| 活动行「当前」药丸 | light | 2.91 | 4.5 |
+| 状态药丸 info | light | 4.16 | 4.5 |
+| 侧栏底部副标题 | light | 4.43 | 4.5 |
+| 主按钮 | dark | 3.22 | 4.5 |
+| 危险按钮 | dark | 3.02 | 4.5 |
+
+根因在**共享样式**：`--ok` / `--warn` / `--err` / `--accent` / `--info` 是按
+「当背景/边框/图形」调的，直接拿来写小号文字在浅色主题上不够。
+
+修法：新增文字专用变体 `--*-fg`（深色主题下与原值相同 → 视觉零变化；
+浅色主题下加深），全局替换 15 处 `color: var(--语义色)`；
+`background:` / `border-color:` 保持原变量不动。取值按**最苛刻背景**
+（药丸自身半透明底色合成到高亮行上）卡线：
+
+| 变量 | 浅色取值 | 白底 | 页面底 | 高亮行 | 药丸合成 |
+|---|---|---|---|---|---|
+| `--ok-fg` | `#0c7049` | 6.12 | 5.66 | 5.49 | 4.99 |
+| `--warn-fg` | `#8a5708` | 6.09 | 5.63 | 5.46 | 4.98 |
+| `--err-fg` | `#bf2b30` | 5.83 | 5.39 | 5.23 | 4.68 |
+| `--accent-fg` | `#265cbe` | 6.26 | 5.80 | 5.61 | 5.07 |
+| `--info-fg` | `#4350c8` | 6.52 | 6.03 | 5.85 | 5.28 |
+
+另将浅色 `--tx-3` 由 `#67718a` 调至 `#606a82`（原值在侧栏琥珀底与高亮行上
+只有 4.42 / 4.38）。
+
+**修复后**：7 项不达标 → **2 项**，且两者都是 0.1.0 起的既有按钮配色，
+本次未动（改动会波及全局视觉）：
+
+| 元素 | 主题 | 比值 | 一行修法 |
+|---|---|---|---|
+| 主按钮（白字） | dark | 3.22 | 底色改用 `--accent-lo` `#3a6fd8` → 4.72 |
+| 危险按钮（白字） | dark | 3.02 | 底色改用 `#c62f34` → 5.44 |
+
+### 5.6 未验证（明确区分）
+
+以下**没有**验证，不得当作已通过：
+
+- ❌ **真机端到端**：`A 断开 → B 连上 → 出口 IP 变成 B 的`。需要第二台服务器。
+- ❌ **真机窗口渲染**：上述截图来自 headless Chrome，不是 Tauri 窗口。
+  字体、缩放比、GPU 合成路径都不同。
+- ❌ **切换后旧 ssh 进程无残留**：逻辑上由 `generation` + `kill_process_by_pid`
+  覆盖，但未在真机上 `tasklist` 核对过。
+- ❌ **安装包**：本版未重新 `npm run tauri build`，无 0.3.0 安装包产物。

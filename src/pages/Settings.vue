@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { store, initStore } from "../stores/gateway";
+import { store, initStore, saveSettings, tunnelIsActive } from "../stores/gateway";
 import { theme, toggleTheme } from "../stores/theme";
 import type { AutostartStatus } from "../types/autostart";
 
@@ -9,10 +9,50 @@ const autostart = ref(null as AutostartStatus | null);
 const autostartBusy = ref(false);
 const autostartMsg = ref("");
 
+// ---- 全局本地端口 ----
+const socksPort = ref(17801);
+const bridgePort = ref(17800);
+const autoReconnect = ref(false);
+const maxAttempts = ref(3);
+const portBusy = ref(false);
+const portMsg = ref("");
+const portErr = ref("");
+
+const running = () => tunnelIsActive(store.snapshot?.state);
+
 onMounted(async () => {
   await initStore();
+  syncPortsFromConfig();
   await loadAutostart();
 });
+
+function syncPortsFromConfig() {
+  const s = store.snapshot?.config?.settings;
+  if (!s) return;
+  socksPort.value = s.socks_port;
+  bridgePort.value = s.bridge_port;
+  autoReconnect.value = s.auto_reconnect;
+  maxAttempts.value = s.max_reconnect_attempts;
+}
+
+async function doSavePorts() {
+  portBusy.value = true;
+  portMsg.value = "";
+  portErr.value = "";
+  try {
+    portMsg.value = await saveSettings({
+      socks_port: Number(socksPort.value),
+      bridge_port: Number(bridgePort.value),
+      auto_reconnect: autoReconnect.value,
+      max_reconnect_attempts: Number(maxAttempts.value),
+    });
+  } catch (e) {
+    portErr.value = String(e);
+    syncPortsFromConfig();
+  } finally {
+    portBusy.value = false;
+  }
+}
 
 async function loadAutostart() {
   try {
@@ -114,23 +154,59 @@ async function toggleAutostart() {
     </div>
 
     <div class="card">
+      <h2>
+        本地入口端口
+        <span :class="['status-pill', running() ? 'warn' : 'info']">
+          {{ running() ? "隧道运行中" : "未连接" }}
+        </span>
+      </h2>
+      <p class="muted">
+        这两个端口是<b>全局设置</b>，不属于任何一台服务器。正因为它们固定不变，
+        切换服务器对 Codex CLI 才是透明的——<span class="mono">HTTP_PROXY</span> 不用改、CLI 不用重启。
+      </p>
+      <div class="row form" style="margin-top: 12px">
+        <label class="field narrow">SOCKS5 端口
+          <input type="number" v-model.number="socksPort" min="1024" max="65535" />
+        </label>
+        <label class="field narrow">HTTP CONNECT 桥接端口
+          <input type="number" v-model.number="bridgePort" min="1024" max="65535" />
+        </label>
+      </div>
+      <div class="notice" v-if="running()">
+        隧道正在运行，此时<b>不能修改端口</b>（后端会拒绝）：正在跑的桥接层仍绑在旧端口上，
+        若配置先行改掉，下游 CLI 会连到一个「配置说有、实际没有」的地址。请先断开再改。
+      </div>
+      <div class="row" style="margin-top: 12px">
+        <button class="btn" :disabled="portBusy" @click="doSavePorts">
+          {{ portBusy ? "保存中…" : "保存端口设置" }}
+        </button>
+        <span v-if="portMsg" class="muted">{{ portMsg }}</span>
+      </div>
+      <p v-if="portErr" class="notice err" style="margin-top: 12px">{{ portErr }}</p>
+    </div>
+
+    <div class="card">
       <h2>断线与安全策略</h2>
       <div class="stat-grid">
         <div class="stat">
           <span class="stat-label">断线策略</span>
           <span class="stat-value dim">停止新请求并警告（非透明直连）</span>
         </div>
-        <div class="stat">
-          <span class="stat-label">自动重连</span>
-          <span class="stat-value">{{ store.snapshot?.config?.settings?.auto_reconnect ? "开启（有限次数）" : "关闭" }}</span>
-        </div>
-        <div class="stat">
-          <span class="stat-label">最大重连次数</span>
-          <span class="stat-value">{{ store.snapshot?.config?.settings?.max_reconnect_attempts ?? 3 }}</span>
-        </div>
       </div>
-      <p class="muted" style="margin-top: 12px">
+      <div class="row form" style="margin-top: 12px">
+        <label class="field">
+          <span>
+            <input type="checkbox" v-model="autoReconnect" style="width: auto; margin-right: 8px" />
+            隧道掉线时自动重连（有限次数）
+          </span>
+        </label>
+        <label class="field narrow">最大重连次数
+          <input type="number" v-model.number="maxAttempts" min="0" max="20" :disabled="!autoReconnect" />
+        </label>
+      </div>
+      <p class="muted">
         隧道掉线时界面立即显示「已断开」，不会继续展示旧出口 IP，也不会悄悄退回直连后假装「已保护」。
+        自动重连只重连<b>同一台</b>服务器；要换服务器请到「服务器」页显式切换。
       </p>
     </div>
 

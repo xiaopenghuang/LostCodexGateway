@@ -325,7 +325,10 @@ pub async fn run_server_diag(
     cfg: &GatewayConfig,
     ssh_exe: &str,
 ) -> Result<(u64, String), String> {
-    let target = format!("{}@{}", cfg.server.username.trim(), cfg.server.host.trim());
+    let server = cfg
+        .active_server()
+        .ok_or_else(|| "尚未选择服务器".to_string())?;
+    let target = format!("{}@{}", server.username.trim(), server.host.trim());
     let mut args: Vec<String> = vec![
         "-T".to_string(),
         "-o".to_string(),
@@ -335,11 +338,11 @@ pub async fn run_server_diag(
         "-o".to_string(),
         "ConnectTimeout=10".to_string(),
         "-p".to_string(),
-        cfg.server.port.to_string(),
+        server.port.to_string(),
     ];
-    if !cfg.server.key_path.trim().is_empty() {
+    if !server.key_path.trim().is_empty() {
         args.push("-i".to_string());
-        args.push(cfg.server.key_path.trim().to_string());
+        args.push(server.key_path.trim().to_string());
     }
     args.push(target);
     args.push(REMOTE_DIAG_CMD.to_string());
@@ -611,10 +614,9 @@ pub async fn run_full_diagnostics(
         (g.config.clone(), g.state, g.tunnel_pid)
     };
     let ssh_exe = cfg
-        .server
-        .ssh_exe_path
-        .trim()
-        .to_string()
+        .active_server()
+        .map(|s| s.ssh_exe_path.trim().to_string())
+        .unwrap_or_default()
         .pipe_if_empty(ssh::detect_ssh_env().path);
     let endpoints = cfg.verify.endpoints.clone();
     let timeout_secs = CHECK_TIMEOUT_SECS;
@@ -697,7 +699,8 @@ async fn run_diag_inner(
     };
 
     // ---- M1: 隧道检测 ----
-    let socks_port = cfg.server.socks_port;
+    // 端口是全局设置（切换服务器时不变），所以这里与「当前是哪台」无关。
+    let socks_port = cfg.socks_port();
     // 1) SSH 进程存活
     let pid_item = match tunnel_pid {
         Some(pid) if pid_alive(pid) => item("ssh_pid", "SSH 子进程", DiagStatus::Ok, format!("PID {} 存活", pid), None),
@@ -782,10 +785,13 @@ async fn run_diag_inner(
         egress_items.push(item("egress_gateway", "网关出口（经 SOCKS）", DiagStatus::Error,
             "经隧道探测出口失败", None));
     }
-    // 预期 IP 比对
+    // 预期 IP 比对（每台服务器各自一份预期，不是全局）
     let expected = {
-        let e = cfg.verify.expected_egress_ip.trim();
-        if e.is_empty() { None } else { Some(e.to_string()) }
+        let e = cfg
+            .active_server()
+            .map(|s| s.expected_egress_ip.trim().to_string())
+            .unwrap_or_default();
+        if e.is_empty() { None } else { Some(e) }
     };
     let match_result = match (&expected, &gateway) {
         (Some(exp), Some(g)) => {

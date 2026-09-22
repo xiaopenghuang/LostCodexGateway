@@ -4,7 +4,7 @@
 //! 运行：cargo test --test bridge_e2e -- --ignored --nocapture
 
 use lostcodexgateway_lib::bridge;
-use lostcodexgateway_lib::config::ServerConfig;
+use lostcodexgateway_lib::config::ServerProfile;
 use lostcodexgateway_lib::ssh;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -12,16 +12,20 @@ use tokio::net::TcpStream;
 
 const FIXTURE_KEY: &str = r"..\tests\fixtures\ssh-server\keys\id_test_ed25519";
 const SSH_EXE: &str = r"C:\Windows\System32\OpenSSH\ssh.exe";
+/// 夹具隧道的本地 SOCKS 端口。端口现在是**全局设置**（不属于任何一台服务器），
+/// 所以它不再放在 `ServerProfile` 里，而是单独一个常量随调用传入。
+const FIXTURE_SOCKS_PORT: u16 = 17821;
 
-fn fixture_cfg(socks_port: u16) -> ServerConfig {
-    ServerConfig {
+fn fixture_server() -> ServerProfile {
+    ServerProfile {
+        id: "fixture".into(),
+        name: "docker-fixture".into(),
         host: "127.0.0.1".into(),
         port: 2222,
         username: "testuser".into(),
         key_path: FIXTURE_KEY.into(),
-        socks_port,
         ssh_exe_path: SSH_EXE.into(),
-        server_name: "docker-fixture".into(),
+        ..Default::default()
     }
 }
 
@@ -97,13 +101,15 @@ async fn raw_connect_request(bridge_port: u16) -> Result<String, String> {
 #[tokio::test]
 #[ignore = "需要 Docker 夹具（tests/fixtures/ssh-server/setup.ps1）"]
 async fn bridge_reaches_internal_service_via_tunnel() {
-    let cfg = fixture_cfg(17821);
-    let (mut tp, _abort) = ssh::spawn_tunnel(SSH_EXE, &cfg).expect("隧道启动失败");
+    let server = fixture_server();
+    let socks_port = FIXTURE_SOCKS_PORT;
+    let (mut tp, _abort) =
+        ssh::spawn_tunnel(SSH_EXE, &server, socks_port).expect("隧道启动失败");
     let result: Result<(), String> = async {
-        expect_port(cfg.socks_port, "隧道").await;
+        expect_port(socks_port, "隧道").await;
 
         let (bridge_port, _task, stats) =
-            bridge::start_bridge(cfg.socks_port).await.map_err(|e| e)?;
+            bridge::start_bridge(socks_port, 0).await.map_err(|e| e)?;
         assert!(bridge_port > 0);
         expect_port(bridge_port, "桥接").await;
 
@@ -120,7 +126,7 @@ async fn bridge_reaches_internal_service_via_tunnel() {
     ssh::stop_tunnel(&mut tp);
     ssh::wait_tunnel(&mut tp).await;
     result.expect("桥接端到端失败");
-    assert!(!lostcodexgateway_lib::verify::port_listening(cfg.socks_port));
+    assert!(!lostcodexgateway_lib::verify::port_listening(socks_port));
 }
 
 // ---------------------------------------------------------------------------
@@ -227,7 +233,7 @@ async fn send_connect(bridge_port: u16, request: &str) -> String {
 #[tokio::test(flavor = "multi_thread")]
 async fn bridge_rejects_loopback_and_private_targets_without_forwarding() {
     let (socks_port, seen) = spawn_fake_socks5().await;
-    let (bridge_port, _task, stats) = bridge::start_bridge(socks_port).await.expect("桥接启动失败");
+    let (bridge_port, _task, stats) = bridge::start_bridge(socks_port, 0).await.expect("桥接启动失败");
 
     // 1) 回环目标 → 403 + BRIDGE_LOOPBACK_TARGET
     let r = send_connect(bridge_port, "CONNECT 127.0.0.1:443 HTTP/1.1\r\n\r\n").await;
@@ -266,7 +272,7 @@ async fn bridge_rejects_loopback_and_private_targets_without_forwarding() {
 #[tokio::test(flavor = "multi_thread")]
 async fn bridge_rejects_self_target_to_prevent_proxy_loop() {
     let (socks_port, _seen) = spawn_fake_socks5().await;
-    let (bridge_port, _task, stats) = bridge::start_bridge(socks_port).await.expect("桥接启动失败");
+    let (bridge_port, _task, stats) = bridge::start_bridge(socks_port, 0).await.expect("桥接启动失败");
 
     // 目标恰好是桥接层自己的端口 → 必须判为 SelfTarget（否则会形成
     // 桥接 → SOCKS → ssh → … → 回到桥接 的循环）
@@ -280,7 +286,7 @@ async fn bridge_rejects_self_target_to_prevent_proxy_loop() {
 #[tokio::test(flavor = "multi_thread")]
 async fn bridge_forwards_public_target_and_records_it() {
     let (socks_port, seen) = spawn_fake_socks5().await;
-    let (bridge_port, _task, stats) = bridge::start_bridge(socks_port).await.expect("桥接启动失败");
+    let (bridge_port, _task, stats) = bridge::start_bridge(socks_port, 0).await.expect("桥接启动失败");
 
     // 公网域名：应放行并真实转发到下游 SOCKS5（远端 DNS 语义）
     let r = send_connect(bridge_port, "CONNECT api.github.com:443 HTTP/1.1\r\n\r\n").await;
@@ -324,7 +330,7 @@ async fn idle_timeout_does_not_kill_active_connection() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let (socks_port, seen) = spawn_passthrough_socks5().await;
-    let (bridge_port, _task, _stats) = bridge::start_bridge(socks_port).await.expect("桥接启动失败");
+    let (bridge_port, _task, _stats) = bridge::start_bridge(socks_port, 0).await.expect("桥接启动失败");
 
     // 用公网形式的目标让桥接放行（假 SOCKS5 会按目标名回一个活跃数据流）
     let mut s = TcpStream::connect(("127.0.0.1", bridge_port)).await.unwrap();

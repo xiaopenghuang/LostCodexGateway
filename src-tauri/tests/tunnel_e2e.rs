@@ -6,7 +6,7 @@
 //! 宿主机直连不通，只有经 SSH 隧道（服务器端建连）才能访问 —— 决定性证据。
 //! 测试不会修改主机 ssh/known_hosts/代理配置；仅使用夹具专用私钥与临时端口。
 
-use lostcodexgateway_lib::config::ServerConfig;
+use lostcodexgateway_lib::config::ServerProfile;
 use lostcodexgateway_lib::ssh::{self, SshErrorClass, TunnelProcess};
 use lostcodexgateway_lib::verify;
 
@@ -14,16 +14,24 @@ const FIXTURE_KEY: &str = r"..\tests\fixtures\ssh-server\keys\id_test_ed25519";
 const SSH_EXE: &str = r"C:\Windows\System32\OpenSSH\ssh.exe";
 const EARLY_WAIT_MS: u64 = 6000;
 
-fn fixture_cfg(socks_port: u16) -> ServerConfig {
-    ServerConfig {
-        host: "127.0.0.1".into(),
-        port: 2222,
-        username: "testuser".into(),
-        key_path: FIXTURE_KEY.into(),
+/// 夹具服务器 + 本次测试使用的 SOCKS 端口。
+///
+/// 端口现在是**全局设置**（不属于任何一台服务器），所以不再塞进 `ServerProfile`，
+/// 而是与服务器一起返回。每个测试用不同端口，避免并行跑时互抢。
+fn fixture(socks_port: u16) -> (ServerProfile, u16) {
+    (
+        ServerProfile {
+            id: "fixture".into(),
+            name: "docker-fixture".into(),
+            host: "127.0.0.1".into(),
+            port: 2222,
+            username: "testuser".into(),
+            key_path: FIXTURE_KEY.into(),
+            ssh_exe_path: SSH_EXE.into(),
+            ..Default::default()
+        },
         socks_port,
-        ssh_exe_path: SSH_EXE.into(),
-        server_name: "docker-fixture".into(),
-    }
+    )
 }
 
 async fn assert_tunnel_alive(port: u16) {
@@ -64,8 +72,8 @@ struct TunnelGuard {
     tp: Option<TunnelProcess>,
 }
 impl TunnelGuard {
-    async fn new(ssh_exe: &str, cfg: &ServerConfig) -> Self {
-        match ssh::spawn_tunnel(ssh_exe, cfg) {
+    async fn new(ssh_exe: &str, server: &ServerProfile, socks_port: u16) -> Self {
+        match ssh::spawn_tunnel(ssh_exe, server, socks_port) {
             Ok((tp, _abort)) => Self { tp: Some(tp) },
             Err(_) => Self { tp: None },
         }
@@ -88,17 +96,17 @@ impl Drop for TunnelGuard {
 #[tokio::test]
 #[ignore = "需要 Docker 夹具（tests/fixtures/ssh-server/setup.ps1）"]
 async fn e2e_tunnel_remote_dns_reaches_server_only_service() {
-    let cfg = fixture_cfg(17811);
-    let mut guard = TunnelGuard::new(SSH_EXE, &cfg).await;
+    let (cfg, socks_port) = fixture(17811);
+    let mut guard = TunnelGuard::new(SSH_EXE, &cfg, socks_port).await;
     let tp = guard.inner();
     assert!(tp.pid > 0, "隧道进程未启动");
-    assert_tunnel_alive(cfg.socks_port).await;
+    assert_tunnel_alive(socks_port).await;
 
     // 决定性验证：远端 DNS 解析 lcfg-test-web（宿主机解析不了的名字）
     let mut last_err = String::new();
     let mut ok = false;
     for _ in 0..6 {
-        match verify::fetch_http_via_socks(cfg.socks_port, "http://lcfg-test-web:8080/", 15).await {
+        match verify::fetch_http_via_socks(socks_port, "http://lcfg-test-web:8080/", 15).await {
             Ok((status, first)) if status == 200 && first == "LCFG-TUNNEL-OK" => {
                 ok = true;
                 break;
@@ -116,7 +124,7 @@ async fn e2e_tunnel_remote_dns_reaches_server_only_service() {
 
     // 补充：出口 IP 验证序列（端口监听 + SOCKS 握手 + 出口 IP）
     let result = verify::verify_tunnel(
-        cfg.socks_port,
+        socks_port,
         &[
             "https://ifconfig.me/ip".to_string(),
             "https://api.ipify.org?format=json".to_string(),
@@ -129,16 +137,16 @@ async fn e2e_tunnel_remote_dns_reaches_server_only_service() {
 
     ssh::stop_tunnel(tp);
     ssh::wait_tunnel(tp).await;
-    assert!(!verify::port_listening(cfg.socks_port), "停止后端口仍监听");
+    assert!(!verify::port_listening(socks_port), "停止后端口仍监听");
 }
 
 /// 错误场景：不存在的密钥 → AuthFailed 分类。
 #[tokio::test]
 #[ignore = "需要 Docker 夹具（tests/fixtures/ssh-server/setup.ps1）"]
 async fn e2e_wrong_key_classified_auth_failed() {
-    let mut cfg = fixture_cfg(17812);
+    let (mut cfg, socks_port) = fixture(17812);
     cfg.key_path = "C:\\nonexistent\\no_key_here".into();
-    let mut guard = TunnelGuard::new(SSH_EXE, &cfg).await;
+    let mut guard = TunnelGuard::new(SSH_EXE, &cfg, socks_port).await;
     let tp = guard.inner();
     let cls = collect_fatal(tp, std::time::Duration::from_millis(EARLY_WAIT_MS)).await;
     ssh::stop_tunnel(tp);
@@ -150,9 +158,9 @@ async fn e2e_wrong_key_classified_auth_failed() {
 #[tokio::test]
 #[ignore = "需要 Docker 夹具（tests/fixtures/ssh-server/setup.ps1）"]
 async fn e2e_wrong_port_classified_unreachable() {
-    let mut cfg = fixture_cfg(17813);
+    let (mut cfg, socks_port) = fixture(17813);
     cfg.port = 2223;
-    let mut guard = TunnelGuard::new(SSH_EXE, &cfg).await;
+    let mut guard = TunnelGuard::new(SSH_EXE, &cfg, socks_port).await;
     let tp = guard.inner();
     let cls = collect_fatal(tp, std::time::Duration::from_millis(EARLY_WAIT_MS)).await;
     ssh::stop_tunnel(tp);
@@ -164,9 +172,9 @@ async fn e2e_wrong_port_classified_unreachable() {
 #[tokio::test]
 #[ignore = "需要 Docker 夹具（tests/fixtures/ssh-server/setup.ps1）"]
 async fn e2e_dns_failure_classified() {
-    let mut cfg = fixture_cfg(17814);
+    let (mut cfg, socks_port) = fixture(17814);
     cfg.host = "nonexistent-domain-lcfg.invalid".into();
-    let mut guard = TunnelGuard::new(SSH_EXE, &cfg).await;
+    let mut guard = TunnelGuard::new(SSH_EXE, &cfg, socks_port).await;
     let tp = guard.inner();
     let cls = collect_fatal(tp, std::time::Duration::from_millis(EARLY_WAIT_MS)).await;
     ssh::stop_tunnel(tp);
@@ -178,11 +186,11 @@ async fn e2e_dns_failure_classified() {
 #[tokio::test]
 #[ignore = "需要 Docker 夹具（tests/fixtures/ssh-server/setup.ps1）"]
 async fn e2e_local_port_busy_classified() {
-    let cfg = fixture_cfg(17815);
+    let (cfg, socks_port) = fixture(17815);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:17815")
         .await
         .expect("先占用端口");
-    let mut guard = TunnelGuard::new(SSH_EXE, &cfg).await;
+    let mut guard = TunnelGuard::new(SSH_EXE, &cfg, socks_port).await;
     let tp = guard.inner();
     let cls = collect_fatal(tp, std::time::Duration::from_millis(EARLY_WAIT_MS)).await;
     ssh::stop_tunnel(tp);

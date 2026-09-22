@@ -20,6 +20,10 @@ pub enum GatewayState {
     Reconnecting,
     Disconnecting,
     Disconnected,
+    /// 正在切换服务器：先断开旧隧道，再用新服务器重连。
+    /// 单独一个状态是为了让 UI 能明确显示「切换中」，而不是把
+    /// 「断开」和「连接」两个阶段混在一起让用户猜。
+    Switching,
     Error,
 }
 
@@ -47,6 +51,9 @@ pub struct GatewaySnapshot {
     pub bridge_rejects_total: u64,
     /// 最近若干条拒绝记录（带稳定错误码 + 中文说明），供诊断页展示
     pub bridge_recent_rejects: Vec<crate::bridge::RejectRecord>,
+    /// 切换前的服务器 id（供「切回上一个」用）。
+    /// 只在发生过切换后才有值；切换失败时不自动回滚，但用户可据此一键切回。
+    pub previous_server_id: Option<String>,
 }
 
 pub struct Inner {
@@ -66,6 +73,8 @@ pub struct Inner {
     pub logs: VecDeque<LogEntry>,
     /// 世代号：每次 connect/disconnect 自增，旧监控任务发现不匹配即退出。
     pub generation: u64,
+    /// 切换前的服务器 id（「切回上一个」用）。
+    pub previous_server_id: Option<String>,
 }
 
 impl Inner {
@@ -84,6 +93,7 @@ impl Inner {
             bridge_last_target: bridge.as_ref().and_then(|b| b.last_target.clone()),
             bridge_rejects_total: bridge.as_ref().map(|b| b.rejects_total).unwrap_or(0),
             bridge_recent_rejects: bridge.map(|b| b.recent_rejects).unwrap_or_default(),
+            previous_server_id: self.previous_server_id.clone(),
         }
     }
 
@@ -106,7 +116,7 @@ pub struct GatewayStateMachine {
 
 impl GatewayStateMachine {
     pub fn new(config: GatewayConfig) -> Self {
-        let initial = if config.is_server_complete() {
+        let initial = if config.is_configured() {
             GatewayState::Ready
         } else {
             GatewayState::Unconfigured
@@ -125,6 +135,7 @@ impl GatewayStateMachine {
                 last_error: None,
                 logs: VecDeque::new(),
                 generation: 0,
+                previous_server_id: None,
             })),
         }
     }

@@ -1,6 +1,6 @@
 [package]
 name = "lostcodexgateway"
-version = "0.2.0"
+version = "0.3.0"
 description = "LostCodexGateway - 官方 Codex 客户端的专用网络出口管理器"
 authors = ["LostCodexGateway"]
 edition = "2021"

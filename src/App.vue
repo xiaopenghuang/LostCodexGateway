@@ -77,6 +77,7 @@ const statusSub = computed(() => {
     return ip ? `出口 ${ip}` : "出口已验证";
   }
   if (s.state === "TUNNEL_READY") return "隧道已通，出口待验证";
+  if (s.state === "SWITCHING") return "正在切换出口服务器…";
   if (s.state === "CONNECTING" || s.state === "RECONNECTING" || s.state === "DISCONNECTING") {
     return "请稍候…";
   }
@@ -85,18 +86,17 @@ const statusSub = computed(() => {
   return "未连接";
 });
 
-/** 连接中状态需要脉冲动画提示「正在做事」。 */
+/** 「正在做事」的状态需要脉冲动画提示。 */
 const pulsing = computed(
-  () => state.value === "CONNECTING" || state.value === "RECONNECTING",
+  () => state.value === "CONNECTING" || state.value === "RECONNECTING" || state.value === "SWITCHING",
 );
 
-/** 侧栏是否处于「连接成功」态，用于给状态卡上色。 */
+/** 侧栏状态卡配色：直接用状态类别，避免出现「文案说有异常、颜色却是灰的」。 */
 const statusKind = computed(() => {
   const k = kind.value;
   if (k === "ok") return "ok";
   if (k === "err") return "err";
-  if (state.value === "TUNNEL_READY" || state.value === "DEGRADED") return "warn";
-  if (pulsing.value) return "warn";
+  if (k === "warn") return "warn";
   return "";
 });
 

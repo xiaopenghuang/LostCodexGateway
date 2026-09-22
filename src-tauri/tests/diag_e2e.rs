@@ -4,7 +4,7 @@
 //! 验收点 7：服务器只读检测可用；不修改服务器配置
 //! 运行：cargo test --test diag_e2e -- --ignored --test-threads=1 --nocapture
 
-use lostcodexgateway_lib::config::{GatewayConfig, ServerConfig};
+use lostcodexgateway_lib::config::{GatewayConfig, ServerProfile};
 use lostcodexgateway_lib::diagnostics::{self, DiagStatus};
 use lostcodexgateway_lib::ssh;
 use lostcodexgateway_lib::state::{GatewayStateMachine};
@@ -13,18 +13,23 @@ use std::time::Duration;
 const FIXTURE_KEY: &str = r"..\tests\fixtures\ssh-server\keys\id_test_ed25519";
 const SSH_EXE: &str = r"C:\Windows\System32\OpenSSH\ssh.exe";
 
-fn fixture_cfg(socks_port: u16) -> GatewayConfig {
+/// 夹具配置 + 本次测试使用的 SOCKS 端口（端口是全局设置，不再是服务器字段）。
+fn fixture(socks_port: u16) -> (GatewayConfig, u16) {
     let mut cfg = GatewayConfig::default();
-    cfg.server = ServerConfig {
+    cfg.servers = vec![ServerProfile {
+        id: "fixture".into(),
+        name: "docker-fixture".into(),
         host: "127.0.0.1".into(),
         port: 2222,
         username: "testuser".into(),
         key_path: FIXTURE_KEY.into(),
-        socks_port,
         ssh_exe_path: SSH_EXE.into(),
-        server_name: "docker-fixture".into(),
-    };
-    cfg
+        ..Default::default()
+    }];
+    cfg.active_server_id = "fixture".into();
+    cfg.settings.socks_port = socks_port;
+    cfg.normalize();
+    (cfg, socks_port)
 }
 
 async fn expect_port(port: u16) {
@@ -41,11 +46,12 @@ async fn expect_port(port: u16) {
 #[tokio::test]
 #[ignore = "需要 Docker 夹具（tests/fixtures/ssh-server/setup.ps1）"]
 async fn diag_full_with_healthy_tunnel() {
-    let cfg = fixture_cfg(17831);
+    let (cfg, socks_port) = fixture(17831);
     let machine = GatewayStateMachine::new(cfg.clone());
     // 启动隧道并记录 pid
-    let (mut tp, _abort) = ssh::spawn_tunnel(SSH_EXE, &cfg.server).expect("隧道启动失败");
-    expect_port(cfg.server.socks_port).await;
+    let server = cfg.active_server().expect("夹具应有一台服务器").clone();
+    let (mut tp, _abort) = ssh::spawn_tunnel(SSH_EXE, &server, socks_port).expect("隧道启动失败");
+    expect_port(socks_port).await;
     {
         let mut inner = machine.inner.lock();
         inner.tunnel_pid = Some(tp.pid);
@@ -80,7 +86,7 @@ async fn diag_full_with_healthy_tunnel() {
 #[tokio::test]
 #[ignore = "需要 Docker 夹具（tests/fixtures/ssh-server/setup.ps1）"]
 async fn diag_detects_dead_tunnel() {
-    let cfg = fixture_cfg(17832);
+    let (cfg, _socks_port) = fixture(17832);
     let machine = GatewayStateMachine::new(cfg.clone());
     {
         let mut inner = machine.inner.lock();
@@ -107,7 +113,7 @@ async fn diag_detects_dead_tunnel() {
 #[tokio::test]
 #[ignore = "需要 Docker 夹具（tests/fixtures/ssh-server/setup.ps1）"]
 async fn server_diag_is_read_only() {
-    let cfg = fixture_cfg(17833);
+    let (cfg, _socks_port) = fixture(17833);
     let before = ssh_config_hash();
     let (ms, out) = diagnostics::run_server_diag(&cfg, SSH_EXE)
         .await
@@ -137,11 +143,13 @@ fn ssh_config_hash() -> String {
 #[tokio::test]
 #[ignore = "需要 Docker 夹具（tests/fixtures/ssh-server/setup.ps1）"]
 async fn egress_mismatch_detected() {
-    let mut cfg = fixture_cfg(17834);
-    cfg.verify.expected_egress_ip = "203.0.113.99".to_string(); // 故意错误（TEST-NET-3）
+    let (mut cfg, socks_port) = fixture(17834);
+    // 预期出口 IP 现在是**每台服务器**的字段（不再是全局 verify）
+    cfg.servers[0].expected_egress_ip = "203.0.113.99".to_string(); // 故意错误（TEST-NET-3）
     let machine = GatewayStateMachine::new(cfg.clone());
-    let (mut tp, _abort) = ssh::spawn_tunnel(SSH_EXE, &cfg.server).expect("隧道启动失败");
-    expect_port(cfg.server.socks_port).await;
+    let server = cfg.active_server().expect("夹具应有一台服务器").clone();
+    let (mut tp, _abort) = ssh::spawn_tunnel(SSH_EXE, &server, socks_port).expect("隧道启动失败");
+    expect_port(socks_port).await;
     {
         let mut inner = machine.inner.lock();
         inner.tunnel_pid = Some(tp.pid);

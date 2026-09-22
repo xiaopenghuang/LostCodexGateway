@@ -4,7 +4,7 @@
 //! - stderr 流式读取 + 错误分类（DNS/鉴权/Host Key/端口占用/远端禁止转发/掉线）
 //! - Host Key 查询（ssh-keygen -F / ssh-keyscan）与首次确认写入
 
-use crate::config::{known_hosts_path, ServerConfig};
+use crate::config::{known_hosts_path, ServerProfile};
 use crate::procutil::std_cmd;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -64,12 +64,16 @@ fn resolve_in_path(name: &str) -> String {
 }
 
 /// 构造 ssh.exe 参数数组（不含任何明文凭据，密钥只传路径）。
-pub fn build_args(cfg: &ServerConfig) -> Vec<String> {
+///
+/// `socks_port` 由调用方传入而非从 `cfg` 读取：本地入口端口是**全局**设置
+/// （见 `config::AppSettings`），不属于任何一台服务器——多服务器切换时它必须
+/// 保持不变，否则下游客户端指向的地址会失效。
+pub fn build_args(cfg: &ServerProfile, socks_port: u16) -> Vec<String> {
     let target = format!("{}@{}", cfg.username.trim(), cfg.host.trim());
     let mut args: Vec<String> = vec![
         "-N".to_string(),
         "-D".to_string(),
-        format!("127.0.0.1:{}", cfg.socks_port),
+        format!("127.0.0.1:{}", socks_port),
         "-o".to_string(),
         "ExitOnForwardFailure=yes".to_string(),
         "-o".to_string(),
@@ -186,12 +190,13 @@ pub struct TunnelProcess {
 /// 启动隧道子进程；返回句柄与 abort 发送端（供断开时立即唤醒监控并终止）。
 pub fn spawn_tunnel(
     ssh_exe: &str,
-    cfg: &ServerConfig,
+    cfg: &ServerProfile,
+    socks_port: u16,
 ) -> Result<(TunnelProcess, tokio::sync::oneshot::Sender<()>), SshErrorClass> {
     if !PathBuf::from(ssh_exe).exists() {
         return Err(SshErrorClass::SshNotFound);
     }
-    let args = build_args(cfg);
+    let args = build_args(cfg, socks_port);
     let mut cmd = Command::new(ssh_exe);
     cmd.args(&args)
         .stdin(Stdio::null())
@@ -277,7 +282,7 @@ pub async fn wait_tunnel(tp: &mut TunnelProcess) {
 
 /// 查询 known_hosts 中是否已有该主机条目；返回 (已知, 指纹文本, key 类型)。
 /// 与 OpenSSH 查询语义一致：非 22 端口用 "[host]:port" 格式，也兼容裸 host 条目。
-pub fn host_key_known(cfg: &ServerConfig) -> (bool, Option<String>, Option<String>) {
+pub fn host_key_known(cfg: &ServerProfile) -> (bool, Option<String>, Option<String>) {
     let kh = known_hosts_path();
     if !kh.exists() {
         return (false, None, None);
@@ -317,7 +322,7 @@ pub fn host_key_known(cfg: &ServerConfig) -> (bool, Option<String>, Option<Strin
 }
 
 /// 用 ssh-keyscan 拉取服务器指纹（首次确认用）。
-pub fn fetch_remote_fingerprint(cfg: &ServerConfig) -> Result<(String, String), String> {
+pub fn fetch_remote_fingerprint(cfg: &ServerProfile) -> Result<(String, String), String> {
     // 注意：Windows 9.5 的 ssh-keyscan 不支持 -o（无法限定 KEX），
     // 依赖服务器端协商；若服务器只声明 sntrup761 会失败并在错误信息中明确提示。
     let out = std_cmd(KEYSCAN_EXE_DEFAULT)
@@ -410,7 +415,7 @@ fn base64_decode(s: &str) -> Option<Vec<u8>> {
 }
 
 /// 确认并写入 known_hosts（只追加刚 keyscan 到的行，写前备份）。
-pub fn confirm_host_key(cfg: &ServerConfig) -> Result<(), String> {
+pub fn confirm_host_key(cfg: &ServerProfile) -> Result<(), String> {
     let kh = known_hosts_path();
     let parent = kh
         .parent()
@@ -476,12 +481,11 @@ mod tests {
 
     #[test]
     fn args_contain_no_plaintext_secrets() {
-        let mut cfg = ServerConfig::default();
+        let mut cfg = ServerProfile::default();
         cfg.host = "vps.example.com".into();
         cfg.username = "ubuntu".into();
-        cfg.socks_port = 17801;
         cfg.key_path = r"C:\Users\me\.ssh\id_ed25519".into();
-        let args = build_args(&cfg);
+        let args = build_args(&cfg, 17801);
         let joined = args.join(" ");
         assert!(joined.contains("127.0.0.1:17801"));
         assert!(joined.contains("ubuntu@vps.example.com"));
@@ -493,17 +497,30 @@ mod tests {
 
     #[test]
     fn args_order_and_dash_flags() {
-        let mut cfg = ServerConfig::default();
+        let mut cfg = ServerProfile::default();
         cfg.host = "1.2.3.4".into();
         cfg.username = "root".into();
         cfg.port = 2222;
-        let args = build_args(&cfg);
+        let args = build_args(&cfg, 17801);
         assert_eq!(args[0], "-N");
         assert_eq!(args[1], "-D");
         assert_eq!(args[2], "127.0.0.1:17801");
         let p = args.iter().position(|a| a == "-p").unwrap();
         assert_eq!(args[p + 1], "2222");
         assert!(args.last().unwrap().contains("root@1.2.3.4"));
+    }
+
+    /// 本地入口端口来自调用方（全局设置），不得从服务器配置读取。
+    /// 这钉住「切换服务器时本地端口不变」这一前提。
+    #[test]
+    fn socks_port_comes_from_caller_not_server_profile() {
+        let mut cfg = ServerProfile::default();
+        cfg.host = "h".into();
+        cfg.username = "u".into();
+        let a = build_args(&cfg, 17801);
+        let b = build_args(&cfg, 18999);
+        assert_eq!(a[2], "127.0.0.1:17801");
+        assert_eq!(b[2], "127.0.0.1:18999");
     }
 
     #[test]
