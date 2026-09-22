@@ -49,6 +49,46 @@ fn connect_in_progress(state: GatewayState) -> bool {
     )
 }
 
+/// 切换失败后应当落到哪个状态。抽成纯函数以便测试。
+///
+/// **这条规则是必需的，不是可选优化。** `Switching` 在 UI 上是个「死状态」：
+/// 「连接」按钮被 `busy` 禁用、「断开」按钮被 `!canDisconnect` 禁用，
+/// 而 `switch_server` 自身又拒绝在 `Switching` 下再次切换——三者叠加，
+/// 一旦停在 `Switching`，用户除了重启应用没有任何出路。
+///
+/// 而 `connect_impl` 的**预检**（私钥存在性、端口占用、Host Key 是否已确认、
+/// ssh.exe 是否可定位）全部在它把状态推进到 `during` **之前**就 `return Err`，
+/// 所以这些失败不会自己落状态，必须由调用方兜住。最容易踩到的触发方式：
+/// 已连接 A，切到一台**还没确认 Host Key** 的 B。
+///
+/// 只在状态**仍是** `Switching` 时才改：若 `connect_impl` 已经推进到 `Error`，
+/// 那是信息量更大的状态，不该被覆盖。切换的第一步已经把旧隧道断开，
+/// 所以失败后落到 `Disconnected` 是准确的（「当前没有隧道在跑」）。
+fn state_after_failed_switch(current: GatewayState) -> GatewayState {
+    if current == GatewayState::Switching {
+        GatewayState::Disconnected
+    } else {
+        current
+    }
+}
+
+/// 把可能卡住的 `Switching` 状态拉出来，并在真的改动时广播快照。
+fn leave_switching(app: &AppHandle, machine: &Arc<PLMutex<Inner>>) {
+    let changed = {
+        let mut inner = machine.lock();
+        let next = state_after_failed_switch(inner.state);
+        if next == inner.state {
+            false
+        } else {
+            inner.state = next;
+            true
+        }
+    };
+    if changed {
+        emit_snapshot(app, machine);
+    }
+}
+
 fn emit_snapshot(app: &AppHandle, inner: &Arc<PLMutex<Inner>>) {
     let snap = inner.lock().snapshot();
     let _ = app.emit(SNAPSHOT_EVENT, snap);
@@ -609,10 +649,6 @@ pub async fn switch_server(
 
     // 先落「切换中」状态，让 UI 立刻有反馈，而不是先卡在断开阶段
     if was_running {
-        {
-            let mut inner = machine.inner.lock();
-            inner.previous_server_id = Some(prev_id.clone());
-        }
         app_log(
             &app,
             &machine.inner,
@@ -630,17 +666,29 @@ pub async fn switch_server(
             GatewayState::Switching,
         )
         .await?;
-    } else {
-        machine.inner.lock().previous_server_id = Some(prev_id.clone());
     }
 
-    // 硬切第二步：改选中项并落盘
+    // 硬切第二步：改选中项并落盘。
+    //
+    // `previous_server_id` 放在**落盘成功之后**才记：若保存失败则根本没切换，
+    // 提前记下「上一个」会让界面冒出一个点了就报错的「切回上一个」。
     {
         let mut cfg = machine.inner.lock().config.clone();
         cfg.active_server_id = id.clone();
         cfg.normalize();
-        config::save(&cfg).map_err(|e| format!("配置保存失败: {}", e))?;
-        machine.inner.lock().config = cfg;
+        if let Err(e) = config::save(&cfg) {
+            // 落盘失败时内存里的选中项还没改，所以「未切换」是准确的说法
+            leave_switching(&app, &machine.inner);
+            return Err(format!(
+                "配置保存失败: {}（未切换，仍停留在「{}」）",
+                e, prev_name
+            ));
+        }
+        let mut inner = machine.inner.lock();
+        inner.config = cfg;
+        if !prev_id.is_empty() {
+            inner.previous_server_id = Some(prev_id.clone());
+        }
     }
     emit_snapshot(&app, &machine.inner);
 
@@ -661,6 +709,10 @@ pub async fn switch_server(
             Ok(format!("已切换到「{}」。{}", target_name, msg))
         }
         Err(e) => {
+            // 必须兜住：connect_impl 的预检失败（Host Key 未确认 / 私钥不存在 /
+            // 端口被占 / 找不到 ssh.exe）都在它推进状态之前就返回了，
+            // 不兜就会停在「切换中」——那个状态下连接与断开按钮都是禁用的。
+            leave_switching(&app, &machine.inner);
             let msg = format!(
                 "已切换到「{}」但连接失败：{}。已选中项仍为「{}」，可点「切回上一个」回到「{}」",
                 target_name, e, target_name, prev_name
@@ -1262,4 +1314,48 @@ pub async fn export_diagnostics(
     ));
     std::fs::write(&path, text).map_err(|e| e.to_string())?;
     Ok(path.to_string_lossy().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 切换失败不得把状态留在 `Switching`。
+    ///
+    /// 回归背景：`Switching` 下 UI 的「连接」与「断开」按钮**都是禁用的**
+    /// （前者被 `busy` 挡、后者被 `!canDisconnect` 挡），而 `switch_server`
+    /// 又拒绝在 `Switching` 下再次切换——停在 `Switching` 等于应用卡死到重启。
+    /// 触发它只需要一次预检失败，最典型的是「已连接 A，切到还没确认 Host Key 的 B」，
+    /// 而 `connect_impl` 的预检恰好都在它推进状态之前返回。
+    #[test]
+    fn failed_switch_never_leaves_switching_state() {
+        assert_eq!(
+            state_after_failed_switch(GatewayState::Switching),
+            GatewayState::Disconnected,
+            "停在 Switching 会让连接与断开按钮同时失效，必须落到可操作的状态"
+        );
+    }
+
+    /// 已经推进到 `Error` 的状态不能被兜底覆盖——它比 `Disconnected` 信息量更大。
+    #[test]
+    fn failed_switch_keeps_more_informative_states() {
+        for s in [
+            GatewayState::Error,
+            GatewayState::Ready,
+            GatewayState::Disconnected,
+            GatewayState::EgressVerified,
+            GatewayState::Unconfigured,
+        ] {
+            assert_eq!(state_after_failed_switch(s), s);
+        }
+    }
+
+    /// 兜底落点 `Disconnected` 必须满足两个前提，否则等于换了个地方卡住：
+    /// ① 不算「隧道活跃」（否则删服务器/改端口会被无谓拒绝）；
+    /// ② 不算「连接进行中」（否则用户无法按「连接」重试）。
+    #[test]
+    fn disconnected_is_actionable() {
+        assert!(!tunnel_is_active(GatewayState::Disconnected));
+        assert!(!connect_in_progress(GatewayState::Disconnected));
+    }
 }

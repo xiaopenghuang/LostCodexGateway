@@ -317,14 +317,14 @@ src-tauri/target/release/bundle/nsis/LostCodexGateway_0.1.0_x64-setup.exe  (2.86
 
 ```
 $ cargo test
-test result: ok. 76 passed; 0 failed   (lib)
+test result: ok. 79 passed; 0 failed   (lib)
 test result: ok.  4 passed; 0 failed; 1 ignored  (bridge_e2e)
 test result: ok.  0 passed; 0 failed; 9 ignored  (tunnel_e2e 5 + diag_e2e 4，均需 Docker 夹具)
 ```
 
 `cargo check --all-targets` 零警告零错误。
 
-新增/改写的单元测试（72 → 76）：
+新增/改写的单元测试（72 → 79）：
 
 | 测试 | 断言的不变量 |
 |---|---|
@@ -336,6 +336,10 @@ test result: ok.  0 passed; 0 failed; 9 ignored  (tunnel_e2e 5 + diag_e2e 4，�
 | `legacy_proxy_mode_is_dropped` | 死字段 `proxy_mode` 不再出现在新配置里 |
 | `legacy_invalid_socks_port_is_rejected` | 旧配置里 <1024 的端口回落到默认值 |
 | `new_format_repairs_dangling_active_id` | 新格式里 `active_server_id` 指向已删除项时自动落到第一台 |
+
+最后 3 条（`failed_switch_never_leaves_switching_state` /
+`failed_switch_keeps_more_informative_states` / `disconnected_is_actionable`）
+是**发布前代码审计**补的回归测试，背景与推导见 §5.6。
 
 ### 5.2 配置迁移实测
 
@@ -433,7 +437,62 @@ dist/assets/index-D--l_9fa.js   132.36 kB │ gzip: 48.25 kB
 | 主按钮（白字） | dark | 3.22 | 底色改用 `--accent-lo` `#3a6fd8` → 4.72 |
 | 危险按钮（白字） | dark | 3.02 | 底色改用 `#c62f34` → 5.44 |
 
-### 5.6 打包（0.3.0）
+### 5.6 发布前代码审计：发现并修复「切换失败卡死」
+
+本节记录的是**发布前自查**发现的缺陷，不是外部反馈。放在打包之前，是因为它改变了
+0.3.0 的产物内容。
+
+**现象**：切换服务器时若 `connect_impl` 在**预检**阶段失败，应用会永久停在
+`SWITCHING`：界面「连接」与「断开」两个按钮都是禁用的，而 `switch_server` 又拒绝
+在 `Switching` 下再次切换 —— 用户除了重启应用没有出路。
+
+**根因**是三条约束叠加，单看每条都合理：
+
+| # | 事实 | 位置 |
+|---|---|---|
+| 1 | `switch_server` 在断开阶段就把状态置为 `Switching` | `disconnect_with(.., Switching, Switching)` |
+| 2 | `connect_impl` 的 7 条预检全部在 `state = during` **之前** `return Err`，失败不落状态 | `connect_impl` 开头 |
+| 3 | `Switching` 下两个按钮都禁用，且后端拒绝再次切换 | `Dashboard.vue` 的 `busy` / `canDisconnect`；`switch_server` 首段 |
+
+第 2 条本身没错：对普通「连接」而言状态没动过，失败后停在 `Ready` 是正确的。
+只有在「状态已被切换流程改成 `Switching`」这个前提下，它才变成致命缺陷。
+
+**最容易踩到的触发路径**：已连接 A → 新增服务器 B（未确认 Host Key）→ 点「切换」。
+`doSwitch` 只对「会断流」做二次确认，**不检查 Host Key**；`connect_impl` 走到
+「服务器 Host Key 尚未确认」即 `return Err`，此时状态仍是 `Switching`。
+这不是边角情况，是首次使用多服务器的必经路径。
+
+**修法**：
+
+- 新增 `state_after_failed_switch(current)`：仅当状态**仍是** `Switching` 时落到
+  `Disconnected`；若已推进到 `Error` 则原样保留（那个状态信息量更大）。
+- 新增 `leave_switching(app, machine)`：应用上述规则，并在真的发生改动时广播快照。
+- `switch_server` 的两条失败路径（`config::save` 失败、`connect_impl` 失败）都调用它。
+- 顺带修正 `previous_server_id` 的赋值时机：改到**落盘成功之后**才记录，
+  避免「保存失败、根本没切换」时界面冒出一个点了就报错的「切回上一个」。
+
+**验证**：
+
+```
+$ cargo test --lib
+test result: ok. 79 passed; 0 failed; 0 ignored   (76 → 79)
+$ cargo check --all-targets
+Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.78s   （零警告零错误）
+```
+
+新增 3 条回归测试：
+
+| 测试 | 断言的不变量 |
+|---|---|
+| `failed_switch_never_leaves_switching_state` | `Switching` 必须落到 `Disconnected`——停在 `Switching` 会让连接与断开按钮同时失效 |
+| `failed_switch_keeps_more_informative_states` | 已推进到 `Error` 等状态不被兜底覆盖 |
+| `disconnected_is_actionable` | 落点 `Disconnected` 既不算「隧道活跃」（否则删服务器/改端口被无谓拒绝），也不算「连接进行中」（否则用户无法按「连接」重试） |
+
+> **诚实声明**：以上是**静态分析 + 纯函数单元测试**的结论，**没有在真机上复现过**
+> 那个卡死现象（需要双服务器环境）。「切到未确认 Host Key 的服务器后界面仍可继续操作」
+> 这条完整链路仍未验证，见 §5.8。
+
+### 5.7 打包（0.3.0）
 
 ```
 $ npm run tauri build        # beforeBuild 自动执行 vue-tsc --noEmit && vite build
@@ -441,7 +500,7 @@ $ npm run tauri build        # beforeBuild 自动执行 vue-tsc --noEmit && vite
 dist/assets/index-Dccyrqej.css   20.57 kB
 dist/assets/index-Bb2FDCga.js   132.42 kB
    Compiling lostcodexgateway v0.3.0
-    Finished `release` profile [optimized] target(s) in 4m 35s
+    Finished `release` profile [optimized] target(s) in 3m 58s
      Running makensis to produce ...\bundle\nsis\LostCodexGateway_0.3.0_x64-setup.exe
     Finished 1 bundle at: LostCodexGateway_0.3.0_x64-setup.exe
 ```
@@ -449,11 +508,17 @@ dist/assets/index-Bb2FDCga.js   132.42 kB
 | 项 | 值 |
 |---|---|
 | 安装包 | `src-tauri/target/release/bundle/nsis/LostCodexGateway_0.3.0_x64-setup.exe` |
-| 大小 | 3,080,529 B（2.94 MiB）；0.2.0 为 3,040,609 B，增量 +39,920 B |
-| 安装包 SHA-256 | `bad61059a246063fd6e22051451103505e9cf9e31579018149db54533ab1591b` |
-| 主程序 SHA-256 | `bc130af0163cf0b7f237334836b30c4dab95c1dc5ad8fb68a2acef000a592c8b` |
-| 构建时间 | 2026-09-22 16:49（本地） |
+| 大小 | 3,081,696 B（2.94 MiB）；0.2.0 为 3,040,609 B，增量 +41,087 B |
+| 安装包 SHA-256 | `ef1ba41b71445f621177599534cf546406e113d33e4fdeff7e7a18fb8d28a0e4` |
+| 主程序 SHA-256 | `1cf9899ded4fa991d826aca06c6b67d7aa39eaf7b764c0f70e0c1903c13df96e` |
+| 构建时间 | 2026-09-22 17:06（本地） |
 | 工具链 | cargo 1.98.1 (797e8a9bc 2026-08-05) / node v22.17.1 / npm 11.19.0 |
+
+> 本节记录的是**第二次构建**（含 §5.6 的卡死修复）。第一次构建的产物
+> （3,080,529 B / `bad61059…1591b`）**已作废**：它不含该修复，
+> 且从未发布过（未建 Release、无人下载），故直接覆盖。
+> 两次构建的前端资源名完全一致（`index-Bb2FDCga.js` / `index-Dccyrqej.css`），
+> 说明差异确实只来自 Rust 侧。
 
 产物级核对——**不看构建日志的自述，直接查二进制**：
 
@@ -473,7 +538,7 @@ dist/assets/index-Bb2FDCga.js   132.42 kB
 > 在安装包里扫出 0 只能说明「它被压缩了」，不能说明「它干净」。
 > 本次没有把安装包扫描当作证据，也没有据此宣称任何结论。
 
-### 5.7 未验证（明确区分）
+### 5.8 未验证（明确区分）
 
 以下**没有**验证，不得当作已通过：
 
@@ -482,7 +547,7 @@ dist/assets/index-Bb2FDCga.js   132.42 kB
   字体、缩放比、GPU 合成路径都不同。
 - ❌ **切换后旧 ssh 进程无残留**：逻辑上由 `generation` + `kill_process_by_pid`
   覆盖，但未在真机上 `tasklist` 核对过。
-- ❌ **安装包冒烟**：0.3.0 安装包**已产出**（见 §5.6），但**静默安装 / 卸载 / 启动未在本版重跑**。
+- ❌ **安装包冒烟**：0.3.0 安装包**已产出**（见 §5.7），但**静默安装 / 卸载 / 启动未在本版重跑**。
   0.1.0 做过这套冒烟（见 §4.2），本版缺这一步。原因是本次构建在沙箱内执行：
   `reg.exe` 被安全策略拉黑（无法核对注册表卸载项），且安装动作会写入工作区之外的
   `%LOCALAPPDATA%`。需在真实桌面会话中补跑，验收点同 §4.2 那张表。
