@@ -433,7 +433,47 @@ dist/assets/index-D--l_9fa.js   132.36 kB │ gzip: 48.25 kB
 | 主按钮（白字） | dark | 3.22 | 底色改用 `--accent-lo` `#3a6fd8` → 4.72 |
 | 危险按钮（白字） | dark | 3.02 | 底色改用 `#c62f34` → 5.44 |
 
-### 5.6 未验证（明确区分）
+### 5.6 打包（0.3.0）
+
+```
+$ npm run tauri build        # beforeBuild 自动执行 vue-tsc --noEmit && vite build
+✓ 33 modules transformed.
+dist/assets/index-Dccyrqej.css   20.57 kB
+dist/assets/index-Bb2FDCga.js   132.42 kB
+   Compiling lostcodexgateway v0.3.0
+    Finished `release` profile [optimized] target(s) in 4m 35s
+     Running makensis to produce ...\bundle\nsis\LostCodexGateway_0.3.0_x64-setup.exe
+    Finished 1 bundle at: LostCodexGateway_0.3.0_x64-setup.exe
+```
+
+| 项 | 值 |
+|---|---|
+| 安装包 | `src-tauri/target/release/bundle/nsis/LostCodexGateway_0.3.0_x64-setup.exe` |
+| 大小 | 3,080,529 B（2.94 MiB）；0.2.0 为 3,040,609 B，增量 +39,920 B |
+| 安装包 SHA-256 | `bad61059a246063fd6e22051451103505e9cf9e31579018149db54533ab1591b` |
+| 主程序 SHA-256 | `bc130af0163cf0b7f237334836b30c4dab95c1dc5ad8fb68a2acef000a592c8b` |
+| 构建时间 | 2026-09-22 16:49（本地） |
+| 工具链 | cargo 1.98.1 (797e8a9bc 2026-08-05) / node v22.17.1 / npm 11.19.0 |
+
+产物级核对——**不看构建日志的自述，直接查二进制**：
+
+| 检查 | 方法 | 结果 |
+|---|---|---|
+| 打进去的是本次 0.3.0 前端，而不是残留的旧 `dist` | 在主程序里搜内嵌资源名 `index-Bb2FDCga.js` / `index-Dccyrqej.css` | 各命中 1 次 ✅ |
+| 版本串已更新 | 主程序内搜 `0.3.0` | 命中 1 次 ✅ |
+| 开发夹具未进产物 | 主程序内搜 6 个夹具标记（超长主机名、3 个文档保留 IP、2 个夹具 id） | 全 0 ✅ |
+
+第一条是关键：`dist/` 是构建前刚生成的，若 `beforeBuildCommand` 被跳过或缓存命中，
+安装包里就会是上一版前端。资源名能对上，说明前端确实重新构建并内嵌了。
+
+> **一条关于证据强度的说明。** Tauri 把前端资源**原样内嵌**（不是压缩包）——
+> 这一点由「资源文件名能直接在二进制里搜到」反证。所以对**主程序**做夹具字符串扫描
+> 是有效证据。反过来，对**安装包**做同样的扫描**无效**：NSIS 整体 LZMA 压缩，
+> 实测连 `0.3.0`、`LostCodexGateway`、`com.lostcodex.gateway` 都是 0 次。
+> 在安装包里扫出 0 只能说明「它被压缩了」，不能说明「它干净」。
+> 本次没有把安装包扫描当作证据，也没有据此宣称任何结论。
+
+### 5.7 未验证（明确区分）
 
 以下**没有**验证，不得当作已通过：
 
@@ -442,4 +482,7 @@ dist/assets/index-D--l_9fa.js   132.36 kB │ gzip: 48.25 kB
   字体、缩放比、GPU 合成路径都不同。
 - ❌ **切换后旧 ssh 进程无残留**：逻辑上由 `generation` + `kill_process_by_pid`
   覆盖，但未在真机上 `tasklist` 核对过。
-- ❌ **安装包**：本版未重新 `npm run tauri build`，无 0.3.0 安装包产物。
+- ❌ **安装包冒烟**：0.3.0 安装包**已产出**（见 §5.6），但**静默安装 / 卸载 / 启动未在本版重跑**。
+  0.1.0 做过这套冒烟（见 §4.2），本版缺这一步。原因是本次构建在沙箱内执行：
+  `reg.exe` 被安全策略拉黑（无法核对注册表卸载项），且安装动作会写入工作区之外的
+  `%LOCALAPPDATA%`。需在真实桌面会话中补跑，验收点同 §4.2 那张表。
