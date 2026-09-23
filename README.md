@@ -8,7 +8,7 @@
 
 一键拉起 SSH SOCKS5 隧道，让被选中的客户端流量从你的服务器出去 —— 不转发、不解密、不改写模型 API。
 
-[![Release](https://img.shields.io/badge/release-v0.4.1-2ea44f?style=flat-square)](../../releases)
+[![Release](https://img.shields.io/badge/release-v0.4.2-2ea44f?style=flat-square)](../../releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078d4?style=flat-square)](#环境要求)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2.x-24c8db?style=flat-square)](https://tauri.app)
@@ -143,7 +143,7 @@ LostCodexGateway 把这些做成一个托盘常驻的小工具：填一次服务
 
 ## 快速开始
 
-1. **安装**：下载 `LostCodexGateway_0.4.1_x64-setup.exe` 并运行。普通用户权限即可，无需管理员。
+1. **安装**：下载 `LostCodexGateway_0.4.2_x64-setup.exe` 并运行。普通用户权限即可，无需管理员。
    装好后建议先点左侧「**环境自检**」——它会逐项列出还差哪一步（OpenSSH / 私钥 / 服务器 / 指纹 / Codex），
    能自动的给按钮，需要你动手的给可复制的步骤。
 2. **填服务器信息**：打开应用 →「服务器」页 →「新增服务器」→ 填写名称、主机地址、SSH 端口、用户名、私钥路径。
