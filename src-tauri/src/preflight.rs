@@ -856,6 +856,64 @@ mod tests {
         }
     }
 
+    /// 条目清单必须**逐项可见**，不能靠人脑数。
+    ///
+    /// 起因：把 13 和 14 搞混过一次——主函数里数漏了子函数产出的 `mihomo_fragment`。
+    /// 口算条目数这种事必须交给测试，否则改动加了一项、文档和预期值就会静默过期。
+    ///
+    /// **注意：总条目数不是常数**，它随环境浮动。实测过两种：
+    /// - 本仓库 CI/dev 环境（未装 Clash Verge）：13 条
+    /// - 用户真机（已装 Clash Verge）：14 条 —— 多出 `mihomo_fragment`
+    /// 所以这里断言的是「**必须出现的核心集合**」，而不是精确相等。
+    #[test]
+    fn core_items_are_always_present() {
+        let cfg = GatewayConfig::default();
+        let r = run_preflight(&cfg);
+        let keys: Vec<&str> = r.items.iter().map(|i| i.key.as_str()).collect();
+
+        // 与「新建一台电脑能否跑通」强相关的项，任何环境下都必须在。
+        for key in [
+            "ssh_exe",
+            "socks_port",
+            "codex_cli",
+            "wsl",
+            "ssh_keygen",
+            "push_pubkey",
+            "codex_install",
+            "openssh_portable",
+            "ssh_key",
+            "server_reachable",
+            "host_key",
+            "allow_tcp_forwarding",
+        ] {
+            assert!(
+                keys.contains(&key),
+                "核心检查项「{}」缺失。若确实删除了它，请同步更新 README 的核心特性表、\
+                 docs/setup-windows.md §0 的对照表，以及 release notes。实际项：{:?}",
+                key,
+                keys
+            );
+        }
+
+        // 取决于环境的三项：装没装 Clash Verge、端口有没有被占。
+        // 只断言「要么在、要么有合理理由不在」，不写死。
+        let has_verge = r.items.iter().any(|i| i.key == "clash_verge");
+        let has_fragment = r.items.iter().any(|i| i.key == "mihomo_fragment");
+        assert!(
+            !has_fragment || has_verge,
+            "mihomo_fragment 只有在检测到 Clash Verge 时才应产出，出现了孤立项"
+        );
+
+        // 总数落在 13–15：13 = 缺 mihomo_fragment，14 = 都齐，15 = bridge_port 也被占用。
+        assert!(
+            (13..=15).contains(&r.items.len()),
+            "条目总数 {} 超出预期区间 13–15。若确实增删了检查项，请同步更新本条测试与文档。\
+             实际项：{:?}",
+            r.items.len(),
+            keys
+        );
+    }
+
     /// `.pub` 公钥路径要被识别为「私钥问题」并给出针对性提示。
     #[test]
     fn pub_key_path_is_flagged_as_key_problem() {
