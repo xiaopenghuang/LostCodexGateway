@@ -944,6 +944,17 @@ label.field > select {
   background: var(--err-soft);
 }
 
+/* ---- 新手清单（首页空状态 / 服务器页前置说明）---- */
+.checklist {
+  margin: var(--sp-2) 0;
+  padding-left: 1.5em;
+  display: grid;
+  gap: var(--sp-2);
+}
+.checklist li {
+  line-height: var(--lh-base);
+}
+
 /* ---- 文字工具类 ---- */
 .muted {
   color: var(--tx-3);

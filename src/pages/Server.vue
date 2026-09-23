@@ -205,6 +205,28 @@ function latencyClass(id: string): string {
       </div>
     </div>
 
+    <div class="notice info">
+      <p><b>这些信息从哪来？</b></p>
+      <ul class="checklist">
+        <li>
+          <b>服务器</b> —— 本工具不提供服务器，你需要自己有一台 Linux 机器
+          （常见做法是买一台 VPS），确认能 SSH 登录、能访问外网。
+        </li>
+        <li>
+          <b>SSH 私钥</b> —— 就是你能登录这台服务器用的那把密钥文件。
+          Windows 上一般在用户目录的 <span class="mono">.ssh</span> 文件夹里，
+          形如 <span class="mono">id_ed25519</span> 或 <span class="mono">id_rsa</span>
+          —— <b>不带</b> <span class="mono">.pub</span> 后缀的那个。
+          还没有的话，可在「环境自检」页按步骤生成。
+        </li>
+        <li>
+          <b>地址 / 端口 / 用户名</b> —— 就是平时 SSH 登录用的那三个值，
+          SSH 端口默认 <span class="mono">22</span>。
+        </li>
+      </ul>
+      <p>不确定手上有什么？先到「环境自检」页跑一遍，它会逐项告诉你缺哪一步。</p>
+    </div>
+
     <!-- ── 服务器列表 ───────────────────────────────────────── -->
     <div class="card">
       <h2>

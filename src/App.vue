@@ -218,7 +218,7 @@ onMounted(async () => {
 
     <div class="main">
       <main class="content">
-        <Dashboard v-if="active === 'dashboard'" @go-server="active = 'server'" />
+        <Dashboard v-if="active === 'dashboard'" @go-server="active = 'server'" @go-doctor="active = 'doctor'" />
         <Doctor v-else-if="active === 'doctor'" :go-tab="(k: string) => (active = k as TabKey)" />
         <Server v-else-if="active === 'server'" />
         <Apps v-else-if="active === 'apps'" />

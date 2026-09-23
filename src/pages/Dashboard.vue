@@ -4,7 +4,7 @@ import {
   store, initStore, connect, disconnect, stateLabel, stateKind, activeServer,
 } from "../stores/gateway";
 
-defineEmits<{ (e: "go-server"): void }>();
+defineEmits<{ (e: "go-server"): void; (e: "go-doctor"): void }>();
 
 const snap = computed(() => store.snapshot);
 const state = computed(() => snap.value?.state);
@@ -129,7 +129,7 @@ onMounted(async () => {
         <div class="hero-body">
           <div class="hero-title">{{ stateLabel(state) }}</div>
           <div class="hero-sub">
-            <template v-if="!configured">尚未配置服务器，请先前往「服务器」页填写 SSH 信息。</template>
+            <template v-if="!configured">还没配置服务器。首次使用建议先做「环境自检」，它会逐项告诉你缺哪一步。</template>
             <template v-else-if="state === 'EGRESS_VERIFIED'">
               隧道与出口均已验证，可以放心启动 Codex CLI。
             </template>
@@ -180,9 +180,23 @@ onMounted(async () => {
 
       <template v-else>
         <div class="notice info">
-          尚未配置服务器。本工具需要一台你能 SSH 登录的服务器来建立出口。
+          <p>
+            <b>本工具不提供服务器</b>，需要你自己准备一台能 SSH 登录的 Linux 服务器。
+            开始前请先确认这三件事：
+          </p>
+          <ol class="checklist">
+            <li><b>一台 Linux 服务器</b> —— 有公网 IP、能 SSH 登录，并且能访问外网</li>
+            <li><b>一把 SSH 私钥</b> —— 登录该服务器用（本工具只保存路径，不读取内容）</li>
+            <li><b>登录信息</b> —— 服务器地址、SSH 端口、用户名</li>
+          </ol>
+          <p>
+            不确定缺哪一步？先跑一遍「环境自检」，它会逐项检查并给出补齐步骤。
+          </p>
         </div>
-        <button class="btn" @click="$emit('go-server')">前往配置</button>
+        <div class="row">
+          <button class="btn" @click="$emit('go-doctor')">先做环境自检</button>
+          <button class="btn" @click="$emit('go-server')">已准备好，去配置服务器</button>
+        </div>
       </template>
     </div>
 
