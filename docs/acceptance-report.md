@@ -915,6 +915,22 @@ $ python verify-embedded-assets.py src-tauri/target/release/lostcodexgateway.exe
 **Rust 侧是明文**（字符串常量不压缩），所以能直接搜；前端侧必须解压。
 两类证据合起来才完整。
 
+**脚本判别力反验**（篡改 `dist/` 里 JS 的 **1 个 bit**，期望失败）：
+
+```
+$ python verify-embedded-assets.py .../lostcodexgateway.exe /tmp/dist-tampered
+/assets/index-DwaECxpP.css          22,007    22,007    4,935  ✓ 逐字节一致
+/assets/index-lx8Q1hXh.js          138,799        -        -  ✗ 找不到内容一致的内嵌副本
+/index.html                            403       403      185  ✓ 逐字节一致
+结论：存在不一致，产物不可信
+exit=1
+```
+
+（篡改方式：把 JS 第 1000 字节 `0x61` 翻成 `0x60`，文件大小不变。）
+
+只翻 1 bit 就被抓到，且**精确指出是哪个文件** ⇒ 比对确实是逐字节的，
+不是「大小一致就算过」。这一步排除「脚本永远说通过」这种最坏情况。
+
 #### 5.12.2 写这个脚本时踩的三个坑
 
 1. **python-brotli 的 `Decompressor.process()` 分块喂入不可靠。**
