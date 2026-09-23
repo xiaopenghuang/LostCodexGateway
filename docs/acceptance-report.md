@@ -849,12 +849,35 @@ $ curl --noproxy '*' https://ipinfo.io/ip
 **元数据核验**（UTF-16LE）：
 
 ```
-$ python verify-installer-meta.py .../LostCodexGateway_0.4.1_x64-setup.exe 0.4.1
-  LostCodexGateway           2 次
-  0.4.1                      2 次
-  0.1.0 / 0.2.0 / 0.3.0 / 0.4.0   0 次
+$ python verify-installer-meta.py .../LostCodexGateway_0.4.1_x64-setup.exe 0.4.1 0.1.0 0.2.0 0.3.0 0.4.0
+文件大小  : 3,110,970 字节
+AppName   : LostCodexGateway
+
+  LostCodexGateway             2 次
+  0.4.1                        2 次
+  0.1.0                        0 次
+  0.2.0                        0 次
+  0.3.0                        0 次
+  0.4.0                        0 次
+
 结论：元数据校验通过（新版本号在、旧版本号无）
 ```
+
+**脚本判别力反验**（拿 0.4.0 旧包当 0.4.1 核验，期望失败）：
+
+```
+$ python verify-installer-meta.py .../LostCodexGateway_0.4.0_x64-setup.exe 0.4.1 0.1.0 0.2.0 0.3.0 0.4.0
+  0.4.1                        0 次
+    ✗ 新版本号 0.4.1 未命中
+  0.4.0                        2 次
+    ✗ 仍残留旧版本号 0.4.0（2 次）
+结论：元数据校验未通过
+exit=1
+```
+
+顺带修了该脚本的两个缺陷：`if __name__ == "__main__"` 块**重复了两次**，
+且 `KNOWN_VERSIONS` 硬编码本项目版本。现改为命令行传入旧版本号
+（`--app-name` 可从文件名推导），并已同步到 `tauri-bundle-verify` 技能。
 
 #### 5.12.1 内嵌前端资源的逐字节核验（本轮新增）
 
