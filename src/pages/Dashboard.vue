@@ -32,10 +32,29 @@ const busy = computed(() =>
   || state.value === "SWITCHING",
 );
 
-const directIp = computed(
-  () => verify.value?.steps.find((s) => s.kind === "direct_ip")?.detail ?? null,
-);
+/**
+ * 本机直连对照 IP。
+ *
+ * **只有 `ok === true` 时 `detail` 才是 IP**；失败时 `detail` 是原因说明
+ * （如「直连失败（2 个端点均不可达…）」），直接当值显示会把整句文案
+ * 塞进「本机直连对照」那一格。所以失败一律返回 null，由模板显示「未取得」。
+ */
+const directIp = computed(() => {
+  const step = verify.value?.steps.find((s) => s.kind === "direct_ip");
+  return step?.ok ? step.detail : null;
+});
 const tunnelIp = computed(() => verify.value?.egress_ip);
+
+/** 直连对照是否未取得——失败时没有可比对的值，说明文案要换。 */
+const directUnavailable = computed(() => {
+  const step = verify.value?.steps.find((s) => s.kind === "direct_ip");
+  return !!step && !step.ok;
+});
+
+/** 是否存在「参考项」失败——用于决定要不要显示那句解释。 */
+const hasAdvisoryFailure = computed(
+  () => !!verify.value?.steps.some((s) => s.advisory && !s.ok),
+);
 
 /** 主状态区的视觉类别：决定光球颜色。 */
 const heroKind = computed(() => {
@@ -165,7 +184,7 @@ onMounted(async () => {
         </div>
         <div class="stat">
           <span class="stat-label">本机直连对照</span>
-          <span :class="['stat-value', directIp ? '' : 'dim']">{{ directIp ?? "未检测" }}</span>
+          <span :class="['stat-value', directIp ? '' : 'dim']">{{ directIp ?? "未取得" }}</span>
         </div>
       </div>
       <div v-if="egressSuspect" class="notice">
@@ -174,6 +193,10 @@ onMounted(async () => {
           并不能证明流量确实经过了服务器。请前往「网络诊断」进一步核查。
         </p>
       </div>
+      <p v-else-if="directUnavailable" class="muted" style="margin-top: 12px">
+        本机直连对照未取得，无法比对两个出口是否相同。这通常是本机直连被网络策略
+        拦截所致，<b>与网关无关</b>——隧道出口已实测为上方地址。
+      </p>
       <p v-else class="muted" style="margin-top: 12px">
         两者不同才能说明流量确实经由服务器出口。本机对照只用于比对，不影响你的其它应用。
       </p>
@@ -188,15 +211,26 @@ onMounted(async () => {
       </h2>
       <div class="steps">
         <div v-for="(s, i) in verify.steps" :key="i" class="step">
-          <span :class="['step-mark', s.ok ? 'ok' : 'err']">{{ s.ok ? "✓" : "✗" }}</span>
+          <!-- 辅助步骤（advisory）失败时用中性标记：它不参与结论判定，
+               渲染成红色 ✗ 会与「全部通过」徽标冲突（用户实测反馈过）。 -->
+          <span
+            :class="['step-mark', s.ok ? 'ok' : s.advisory ? 'info' : 'err']"
+          >{{ s.ok ? "✓" : s.advisory ? "–" : "✗" }}</span>
           <div class="step-body">
-            <div class="step-label">{{ s.label }}</div>
+            <div class="step-label">
+              {{ s.label }}
+              <span v-if="s.advisory" class="muted">（参考项）</span>
+            </div>
             <div class="step-detail">{{ s.detail }} · {{ s.timestamp }}</div>
           </div>
         </div>
       </div>
       <p class="muted" style="margin-top: 14px">
         「隧道测试」只证明隧道本身可用；具体应用是否走了网关，见「应用」页的路由验证。
+      </p>
+      <p v-if="hasAdvisoryFailure" class="muted" style="margin-top: 6px">
+        「参考项」不参与通过判定：本机对照出口取不到时，隧道仍可能完全正常
+        （通常是本机直连被网络策略拦截，与网关无关）。
       </p>
     </div>
   </div>

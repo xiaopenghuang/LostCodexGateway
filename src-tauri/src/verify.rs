@@ -14,6 +14,13 @@ pub struct VerifyStep {
     pub ok: bool,
     pub detail: String,
     pub timestamp: String,
+    /// 该步骤是否只是**参考信息**，不参与整体 `ok` 判定。
+    ///
+    /// 前端据此避免把辅助步骤的失败渲染成「错误」—— 否则会出现
+    /// 「红色 ✗ + 徽标写『全部通过』」的矛盾观感（用户实测反馈过）。
+    /// `serde(default)` 保证旧快照仍可反序列化。
+    #[serde(default)]
+    pub advisory: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -38,31 +45,59 @@ pub fn port_listening(port: u16) -> bool {
     .is_ok()
 }
 
-/// 取本机「对照出口」：直接（不经隧道）请求第一个端点，仅用于展示对照。
-/// 只尝试一次：对照失败不能拖慢连接流程。
+/// 取本机「对照出口」：直接（不经隧道）请求端点，仅用于展示对照。
+///
+/// **并发尝试所有端点，取第一个成功的。**
+///
+/// 这里踩过一个坑：原先只试 `endpoints.first()`，而第一个端点
+/// （`api.ipify.org`）在实测网络下 **DNS 能解析、但 TLS 握手被重置**
+/// （`Recv failure: Connection was reset`），于是「本机对照出口」永远显示失败——
+/// 而第二个端点（`ipinfo.io`）明明可用。对照步骤虽不参与结论判定，
+/// 但长期报红会让人误以为隧道有问题。
+///
+/// 并发而非串行是为了控耗时：这一步在「连接」流程里是**串行**执行的，
+/// 串行尝试会让最坏耗时随端点数累加（注释原先写的「不能让连接卡 30 秒」
+/// 就是这个顾虑）。并发后总耗时 ≈ 单个端点的超时，与端点数无关。
 pub async fn direct_egress(endpoints: &[String], timeout_secs: u64) -> VerifyStep {
-    if let Some(ep) = endpoints.first() {
-        match fetch_ip_direct(ep, timeout_secs).await {
-            Ok(ip) => {
+    let mut set = tokio::task::JoinSet::new();
+    for ep in endpoints {
+        let ep = ep.clone();
+        set.spawn(async move { fetch_ip_direct(&ep, timeout_secs).await });
+    }
+
+    while let Some(joined) = set.join_next().await {
+        match joined {
+            Ok(Ok(ip)) => {
+                // 有一个成功就够用了；显式 abort 其余任务，不必等它们超时。
+                set.abort_all();
                 return VerifyStep {
                     kind: "direct_ip".into(),
                     label: "本机对照出口 IP".into(),
                     ok: true,
                     detail: ip,
                     timestamp: now(),
+                    advisory: true,
                 };
             }
-            Err(e) => {
-                eprintln!("[verify] direct egress {} failed: {}", ep, e);
-            }
+            Ok(Err(e)) => eprintln!("[verify] direct egress failed: {}", e),
+            Err(e) => eprintln!("[verify] direct egress task failed: {}", e),
         }
     }
+
     VerifyStep {
         kind: "direct_ip".into(),
         label: "本机对照出口 IP".into(),
         ok: false,
-        detail: "直连失败（本机直连被限制或网络策略拦截）".into(),
+        detail: if endpoints.is_empty() {
+            "直连失败（未配置验证端点）".into()
+        } else {
+            format!(
+                "直连失败（{} 个端点均不可达；本机直连可能被网络策略拦截）",
+                endpoints.len()
+            )
+        },
         timestamp: now(),
+        advisory: true,
     }
 }
 
@@ -87,6 +122,7 @@ pub async fn verify_tunnel(
             "端口无监听".into()
         },
         timestamp: now(),
+        advisory: false,
     });
 
     // ② SOCKS5 握手 + CONNECT（远端 DNS）
@@ -101,6 +137,7 @@ pub async fn verify_tunnel(
             "握手失败".into()
         },
         timestamp: now(),
+        advisory: false,
     });
 
     // ③ 经隧道出口 IP
@@ -118,6 +155,7 @@ pub async fn verify_tunnel(
                         ok: true,
                         detail: ip,
                         timestamp: now(),
+                        advisory: false,
                     });
                     break;
                 }
@@ -128,6 +166,7 @@ pub async fn verify_tunnel(
                         ok: false,
                         detail: format!("{} 失败: {}", ep, e),
                         timestamp: now(),
+                        advisory: false,
                     });
                 }
             }
@@ -424,5 +463,58 @@ mod tests {
     #[test]
     fn port_listening_negative() {
         assert!(!port_listening(65530));
+    }
+
+    /// 未配置端点时要给出**明确的**失败原因，而不是笼统的「直连失败」。
+    #[tokio::test]
+    async fn direct_egress_reports_missing_endpoints() {
+        let step = direct_egress(&[], 1).await;
+        assert!(!step.ok);
+        assert!(
+            step.detail.contains("未配置"),
+            "应说明是「未配置验证端点」，实际: {}",
+            step.detail
+        );
+    }
+
+    /// 全部端点不可达时：失败、不 panic、detail 里带上尝试过的端点数。
+    /// 用 127.0.0.1 上必然无监听的端口，不依赖外网。
+    #[tokio::test]
+    async fn direct_egress_fails_when_all_endpoints_unreachable() {
+        let eps = vec![
+            "https://127.0.0.1:1/x".to_string(),
+            "https://127.0.0.1:2/x".to_string(),
+        ];
+        let step = direct_egress(&eps, 2).await;
+        assert!(!step.ok);
+        assert!(
+            step.detail.contains('2'),
+            "应说明尝试了 2 个端点，实际: {}",
+            step.detail
+        );
+    }
+
+    /// 真实网络验证：**第一个端点不可达时，应能回退到第二个**。
+    ///
+    /// 这是本次修复的核心行为。默认 `#[ignore]`（依赖外网），需要时手动跑：
+    ///     cargo test --lib direct_egress -- --ignored --nocapture
+    ///
+    /// 背景：实测环境下 `api.ipify.org` 的 DNS 能解析、但 TLS 握手被重置，
+    /// 而 `ipinfo.io` 可用。修复前只试第一个端点，导致「对照出口」永远失败。
+    #[tokio::test]
+    #[ignore = "依赖外网，手动运行"]
+    async fn direct_egress_falls_back_to_working_endpoint() {
+        let eps = vec![
+            "https://api.ipify.org?format=json".to_string(),
+            "https://ipinfo.io/ip".to_string(),
+        ];
+        let step = direct_egress(&eps, 8).await;
+        println!("direct_egress => ok={} detail={}", step.ok, step.detail);
+        assert!(
+            step.ok,
+            "至少一个端点可用时应成功，实际: {}",
+            step.detail
+        );
+        assert!(is_ipv4(&step.detail) || is_ipv6(&step.detail));
     }
 }

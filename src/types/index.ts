@@ -79,6 +79,14 @@ export interface VerifyStep {
   ok: boolean;
   detail: string;
   timestamp: string;
+  /**
+   * 该步骤是否只是**参考信息**，不参与整体 `ok` 判定。
+   *
+   * 前端据此避免把辅助步骤的失败渲染成「错误」—— 否则会出现
+   * 「红色 ✗ + 徽标写『全部通过』」的矛盾观感（用户实测反馈过）。
+   * 后端 `verify.rs` 的 `advisory` 字段，旧快照可能缺该字段，故用可选。
+   */
+  advisory?: boolean;
 }
 
 export interface VerifyResult {

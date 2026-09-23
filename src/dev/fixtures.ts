@@ -105,7 +105,7 @@ const VERIFY_OK = {
     { kind: "socks_handshake", label: "本地 SOCKS5 握手", ok: true, detail: "127.0.0.1:17801 可建立连接", timestamp: now() },
     { kind: "tunnel_test", label: "隧道连通性（经 SOCKS 请求服务器自身）", ok: true, detail: "收到 HTTP 200，耗时 412ms", timestamp: now() },
     { kind: "egress_ip", label: "出口 IP 检测（远端 DNS 解析）", ok: true, detail: "203.0.113.47", timestamp: now() },
-    { kind: "direct_ip", label: "本机直连对照", ok: true, detail: "198.51.100.22", timestamp: now() },
+    { kind: "direct_ip", label: "本机直连对照", ok: true, detail: "198.51.100.22", timestamp: now(), advisory: true },
   ],
   started_at: now(),
   finished_at: now(),
@@ -119,8 +119,37 @@ const VERIFY_SUSPECT = {
     VERIFY_OK.steps[0],
     VERIFY_OK.steps[1],
     { kind: "egress_ip", label: "出口 IP 检测（远端 DNS 解析）", ok: true, detail: "198.51.100.22", timestamp: now() },
-    { kind: "direct_ip", label: "本机直连对照", ok: false, detail: "198.51.100.22", timestamp: now() },
+    // 注意 `ok: true`：这个场景是「两个出口相同」，前提是**直连对照取到了值**。
+    // 若标成 false，前端按新语义会把它当「未取得」，`egressSuspect` 永远不成立。
+    { kind: "direct_ip", label: "本机直连对照", ok: true, detail: "198.51.100.22", timestamp: now(), advisory: true },
   ],
+};
+
+/**
+ * 参考项失败：隧道三步全过，只有「本机直连对照」取不到。
+ *
+ * 这是**实测常见**的状态（第一个验证端点可能在本机网络下被 TLS 重置），
+ * 用于验证「辅助步骤失败不使用错误视觉」——否则会出现红色 ✗ 与
+ * 徽标「全部通过」并存的矛盾观感。
+ */
+const VERIFY_DIRECT_UNAVAILABLE = {
+  ok: true,
+  egress_ip: "203.0.113.47",
+  steps: [
+    VERIFY_OK.steps[0],
+    VERIFY_OK.steps[1],
+    VERIFY_OK.steps[2],
+    {
+      kind: "direct_ip",
+      label: "本机直连对照",
+      ok: false,
+      detail: "直连失败（2 个端点均不可达；本机直连可能被网络策略拦截）",
+      timestamp: now(),
+      advisory: true,
+    },
+  ],
+  started_at: now(),
+  finished_at: now(),
 };
 
 export const SSH_ENV: SshEnv = {
@@ -165,6 +194,23 @@ const SCENARIOS: Record<string, GatewaySnapshot> = {
       { code: "BRIDGE_LOOPBACK_TARGET", message: "回环地址不经隧道转发", target: "127.0.0.1:8080" },
       { code: "BRIDGE_SELF_TARGET", message: "目标为桥接层自身端口，会形成循环代理", target: "127.0.0.1:17800" },
     ],
+    previous_server_id: null,
+  },
+
+  /** 参考项失败：隧道完全正常，只有本机直连对照取不到。
+   *  用于验证辅助步骤失败不用「错误」视觉（红 ✗ 会与「全部通过」冲突）。 */
+  direct_unavailable: {
+    state: "EGRESS_VERIFIED",
+    config: CONFIG,
+    last_verify: VERIFY_DIRECT_UNAVAILABLE,
+    ssh_pid: 24316,
+    last_error: null,
+    recent_logs: logs(),
+    bridge_port: 17800,
+    bridge_connections_total: 421,
+    bridge_last_target: "chatgpt.com:443",
+    bridge_rejects_total: 0,
+    bridge_recent_rejects: [],
     previous_server_id: null,
   },
 

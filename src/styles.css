@@ -1287,6 +1287,16 @@ table.tbl tbody tr:hover {
   color: var(--err-fg);
   border: 1px solid var(--err-line);
 }
+/* 辅助步骤（`advisory: true`）：失败时不使用「错误」视觉。
+ *
+ * 起因：`direct_ip`（本机对照出口）不参与结论判定，但失败时被渲染成红色 ✗，
+ * 而徽标同时写着「全部通过」——用户实测反馈「这到底要不要紧」。
+ * 辅助信息没拿到 ≠ 出错，用中性灰表达。 */
+.step-mark.info {
+  background: var(--bg-elevated);
+  color: var(--tx-3);
+  border: 1px solid var(--bd);
+}
 .step-body {
   flex: 1;
   min-width: 0;
