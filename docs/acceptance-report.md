@@ -811,7 +811,123 @@ $ curl --noproxy '*' https://ipinfo.io/ip
 |---|---|
 | 提交 | `9b09d7d`（IPC 修复）、`80b45d3`（verify 修复） |
 | 单元测试 | 90 → 92（verify 新增 2 条 + 1 条 `--ignored` 网络测试） |
-| **是否已进安装包** | ❌ **否** —— 用户装的 0.4.0 仍带这两个缺陷 |
+| **是否已进安装包** | ❌ 否（0.4.0 里没有）→ ✅ **已于 0.4.1 交付**，见 §5.12 |
 
 **注**：这两处修复都在 `0.4.0` 发布之后，故 `v0.4.0` tag 与 Release 的内容
-**不包含**它们。若要交付给用户，需重新打包（建议 `0.4.1`）。
+**不包含**它们。已重新打包为 `0.4.1`，并对「主程序内嵌的前端资源」做了
+逐字节核验，见 §5.12。
+
+### 5.12 打包 0.4.1：两处修复的交付验证（2026-09-23）
+
+§5.11 的两处修复发布在 `0.4.0` 之后。用户仍装的是 0.4.0，故升版 `0.4.1`
+重新打包（语义化版本：bug 修复走 patch，不覆盖已发布的 `0.4.0`）。
+
+**版本号改动**（3 处 + 文档 2 处）：
+
+| 文件 | 改动 |
+|---|---|
+| `src-tauri/tauri.conf.json` | `0.4.0` → `0.4.1` |
+| `src-tauri/Cargo.toml` | `0.4.0` → `0.4.1` |
+| `package.json` | `0.4.0` → `0.4.1` |
+| `README.md` | 徽标 + 安装包名 |
+| `README.en.md` | 徽标 + 安装包名 —— **发现上一轮漏更新，徽标还停在 `v0.3.0`** |
+
+**构建**：
+
+- 命令：`npm run tauri build`（`beforeBuildCommand` 自动跑 `npm run build`）
+- 结果：`Finished 1 bundle`，耗时 4m 18s
+- 前端资源：`index-lx8Q1hXh.js`（138.80 kB）/ `index-DwaECxpP.css`（22.01 kB）
+
+| 项 | 值 |
+|---|---|
+| 安装包 | `src-tauri/target/release/bundle/nsis/LostCodexGateway_0.4.1_x64-setup.exe` |
+| 安装包大小 | 3,110,970 字节 |
+| 安装包 SHA-256 | `d0cbada78cfefaeb96267dddec4da4d828cffec211ee110a81ae66209ea943a1` |
+| 主程序 | `src-tauri/target/release/lostcodexgateway.exe`（11,899,904 字节） |
+| 主程序 SHA-256 | `f75206733ec4ad52278cb14aaed271fd453d463e3ae15b7860e41691b77d5a7e` |
+
+**元数据核验**（UTF-16LE）：
+
+```
+$ python verify-installer-meta.py .../LostCodexGateway_0.4.1_x64-setup.exe 0.4.1
+  LostCodexGateway           2 次
+  0.4.1                      2 次
+  0.1.0 / 0.2.0 / 0.3.0 / 0.4.0   0 次
+结论：元数据校验通过（新版本号在、旧版本号无）
+```
+
+#### 5.12.1 内嵌前端资源的逐字节核验（本轮新增）
+
+**动机**：要证明「两处修复确实进了安装包」。但**版本号对了不代表前端是新的**
+—— 前端是编译进 exe 的，`tauri.conf.json` 的版本号只影响 NSIS 元数据。
+
+**踩到的假阴性**：想用 `grep -a` 在主程序里搜修复特征串（如 `__lcfgReady`），
+结果是 **0 次**。原因是 **Tauri 2 把前端资源 brotli 压缩后嵌入**，压缩流里
+没有明文。于是「搜不到」被误读成「修复没进包」。
+
+**做法**：新建 `.workbuddy-ai/shots/verify-embedded-assets.py` —— 定位资源路径
+明文，从其后逐字节解压 brotli 流，与 `dist/` 里的源文件**逐字节比对**。
+
+```
+$ python verify-embedded-assets.py src-tauri/target/release/lostcodexgateway.exe dist
+
+资源路径                            源大小      解出    压缩流  结果
+/assets/index-DwaECxpP.css       22,007    22,007    4,935  ✓ 逐字节一致 (路径偏移 0x8930b0)
+/assets/index-lx8Q1hXh.js       138,799   138,799   46,664  ✓ 逐字节一致 (路径偏移 0x8944d5)
+/index.html                         403       403      185  ✓ 逐字节一致 (路径偏移 0x894411)
+
+结论：主程序内嵌的前端资源与本次 dist/ 逐字节一致
+```
+
+因为 `dist/assets/index-lx8Q1hXh.js` 里含有修复特征（`socksPort` × 1、
+`advisory` × 6、`direct_ip` × 2），且文件名 `lx8Q1hXh` 是 vite 的**内容哈希**
+（0.4.0 时是 `index-Bzlsnv9z.js`，不同），故可确认：
+
+| 修复 | 载体 | 在产物中的证据 |
+|---|---|---|
+| IPC 参数名 camelCase | 前端 JS | 内嵌 JS 与 `dist` 逐字节一致，含 `socksPort` |
+| `directIp` 只在 ok 时取值 / 中性标记 | 前端 JS | 同上，含 `advisory` × 6、`direct_ip` × 2 |
+| `direct_egress` 并发遍历 | Rust（明文） | 主程序里 `advisory` × 2、`本机对照出口 IP` × 1、`[verify] direct egress failed:` × 1 |
+
+**Rust 侧是明文**（字符串常量不压缩），所以能直接搜；前端侧必须解压。
+两类证据合起来才完整。
+
+#### 5.12.2 写这个脚本时踩的三个坑
+
+1. **python-brotli 的 `Decompressor.process()` 分块喂入不可靠。**
+   同一段数据（内嵌的 `index-lx8Q1hXh.js`）：
+
+   | chunk 大小 | 解出字节 | 结果 |
+   |---|---|---|
+   | 1 | 138,799 | ✅ 完整，与 dist 一致 |
+   | 64 | 138,790 | ✗ 差 9 字节后报错 |
+   | 1024 | 136,970 | ✗ |
+   | 8192 | 118,746 | ✗ |
+   | 65,536 | 0 | ✗ 立刻报错 |
+   | 200,000 | 0 | ✗ |
+
+   断点位置随分块大小变化 ⇒ **是绑定的分块行为，不是数据被截断**。
+   改用**逐字节喂入**（4.6 万次调用，实测 0.55s，可接受）。
+   差点因此得出「安装包里的前端被截断」的错误结论。
+
+2. **不能用「下一个资源路径的偏移」当压缩流的右边界。**
+   三个资源路径在主程序里的排列顺序（`/index.html` → `*.css` → `*.js`）
+   与 `dist/` 目录顺序**不同**，且并非两两相邻。逐字节解压能自然停在流结束处，
+   不需要预先知道长度。
+
+3. **同一个路径字符串在主程序里可能出现多次，只有一处是资源表项。**
+   实测 `/index.html` 出现 **5 次**：`0x890e32` 那处后面是结构体数据
+   （`00 00 00 08 f8 8f 40 01 ...`），解压第 8 字节就报错；`0x894411`
+   才解出 403 字节的 `<!doctype html>`。
+   故判据改为「**解压结果与源文件逐字节一致**」，而不是「找到了路径」。
+
+#### 5.12.3 测试与验收
+
+```
+cargo test --lib -- --skip single_instance
+  → 91 passed; 0 failed; 1 ignored; 2 filtered out
+    （2 条 single_instance 用例因用户 app 正在运行而跳过，见 R24）
+vue-tsc --noEmit + vite build   → 通过
+verify-installer-meta.py        → 通过
+verify-embedded-assets.py       → 3/3 逐字节一致
+```
