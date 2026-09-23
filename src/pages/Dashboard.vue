@@ -33,6 +33,17 @@ const busy = computed(() =>
 );
 
 /**
+ * 「连接」按钮是否可用。
+ *
+ * 已连上时禁用 —— 用户实测反馈过：「首页都显示出口已验证了，怎么『连接』
+ * 按钮还是亮的」。点它只会被后端挡回来（「已有连接在进行中，请先断开」），
+ * 按钮亮着反而和这个提示自相矛盾。
+ */
+const canConnect = computed(
+  () => configured.value && !busy.value && !canDisconnect.value,
+);
+
+/**
  * 本机直连对照 IP。
  *
  * **只有 `ok === true` 时 `detail` 才是 IP**；失败时 `detail` 是原因说明
@@ -135,8 +146,8 @@ onMounted(async () => {
           </div>
         </div>
         <div class="row" style="flex: 0 0 auto">
-          <button class="btn" :disabled="!configured || busy || acting" @click="doConnect">
-            连接
+          <button class="btn" :disabled="!canConnect || acting" @click="doConnect">
+            {{ canDisconnect ? "已连接" : "连接" }}
           </button>
           <button class="btn danger" :disabled="!canDisconnect || acting" @click="doDisconnect">
             断开

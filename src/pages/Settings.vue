@@ -167,18 +167,35 @@ async function toggleAutostart() {
       </p>
       <div class="row form" style="margin-top: 12px">
         <label class="field narrow">SOCKS5 端口
-          <input type="number" v-model.number="socksPort" min="1024" max="65535" />
+          <input
+            type="number"
+            v-model.number="socksPort"
+            min="1024"
+            max="65535"
+            :disabled="running()"
+          />
         </label>
         <label class="field narrow">HTTP CONNECT 桥接端口
-          <input type="number" v-model.number="bridgePort" min="1024" max="65535" />
+          <input
+            type="number"
+            v-model.number="bridgePort"
+            min="1024"
+            max="65535"
+            :disabled="running()"
+          />
         </label>
       </div>
+      <!-- 隧道运行中直接禁用输入与保存，而不是等用户改完再报错。
+           后端拒绝改端口是**设计行为**（正在跑的桥接层仍绑在旧端口上），
+           但「让用户先改、点保存才被拒」是糟糕的流程 —— 用户实测反馈过
+           「改了半天保存不了」。这里提前禁掉 + 说清去哪儿断开。 -->
       <div class="notice" v-if="running()">
-        隧道正在运行，此时<b>不能修改端口</b>（后端会拒绝）：正在跑的桥接层仍绑在旧端口上，
-        若配置先行改掉，下游 CLI 会连到一个「配置说有、实际没有」的地址。请先断开再改。
+        隧道正在运行，此时<b>不能修改端口</b>：正在跑的桥接层仍绑在旧端口上，
+        若配置先行改掉，下游 CLI 会连到一个「配置说有、实际没有」的地址。
+        请先到「首页」点「断开」，改完端口再重新连接。
       </div>
       <div class="row" style="margin-top: 12px">
-        <button class="btn" :disabled="portBusy" @click="doSavePorts">
+        <button class="btn" :disabled="portBusy || running()" @click="doSavePorts">
           {{ portBusy ? "保存中…" : "保存端口设置" }}
         </button>
         <span v-if="portMsg" class="muted">{{ portMsg }}</span>

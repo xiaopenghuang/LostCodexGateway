@@ -183,7 +183,17 @@ fn port_available(port: u16) -> bool {
 }
 
 /// 跑一次完整的环境自检。**只读**，不改任何配置或系统状态。
-pub fn run_preflight(cfg: &GatewayConfig) -> PreflightReport {
+///
+/// `tunnel_active`：隧道当前是否处于活跃状态（`Connecting` / `TunnelReady` /
+/// `EgressVerified` / `Degraded` / `Reconnecting` / `Switching`）。
+///
+/// **为什么需要这个参数**：本函数用「能否 `bind`」判断本地端口是否可用，
+/// 而隧道运行中它自己的 ssh 进程**正监听**着这两个端口 —— bind 必然失败。
+/// 不加区分就会把「自己的隧道占着端口」误报成「被其他程序占用」。
+///
+/// 用户实测遇到过：首页显示「出口已验证 · 127.0.0.1:17801 端口监听正常」，
+/// 同时本页报「17801 已被其他程序占用」，**两个页面结论互相矛盾**。
+pub fn run_preflight(cfg: &GatewayConfig, tunnel_active: bool) -> PreflightReport {
     let mut items: Vec<PreflightItem> = Vec::new();
 
     // ---- 1. 系统 OpenSSH ----
@@ -330,6 +340,10 @@ pub fn run_preflight(cfg: &GatewayConfig) -> PreflightReport {
     }
 
     // ---- 3. 本地端口 ----
+    //
+    // 判据是「能否 bind」，所以**必须**结合 `tunnel_active` 一起看：
+    // 隧道运行中，它自己的 ssh 进程正监听着这两个端口，bind 一定失败。
+    // 「被自己的隧道占用」是**正常状态**，不是阻塞项。
     let socks_port = cfg.socks_port();
     let bridge_port = cfg.bridge_port();
     if port_available(socks_port) {
@@ -337,6 +351,13 @@ pub fn run_preflight(cfg: &GatewayConfig) -> PreflightReport {
             "socks_port",
             "本地 SOCKS 端口",
             format!("127.0.0.1:{} 可用", socks_port),
+        ));
+    } else if tunnel_active {
+        // 隧道占着自己的端口 —— 正常，别吓唬用户
+        items.push(PreflightItem::ok(
+            "socks_port",
+            "本地 SOCKS 端口",
+            format!("127.0.0.1:{} 正由当前隧道使用（已连接，属正常）", socks_port),
         ));
     } else {
         items.push(PreflightItem::blocking_error(
@@ -351,7 +372,8 @@ pub fn run_preflight(cfg: &GatewayConfig) -> PreflightReport {
             ],
         ));
     }
-    if bridge_port != 0 && !port_available(bridge_port) {
+    // 桥接端口：仅在「有问题」时出条目（隧道自己占着不算问题）。
+    if bridge_port != 0 && !port_available(bridge_port) && !tunnel_active {
         items.push(PreflightItem::blocking_error(
             "bridge_port",
             "桥接端口",
@@ -710,7 +732,7 @@ mod tests {
         cfg.servers.clear();
         cfg.active_server_id = String::new();
 
-        let r = run_preflight(&cfg);
+        let r = run_preflight(&cfg, false);
         assert!(!r.ready, "无服务器时不应判定为就绪");
         assert!(r.blocking_failed > 0);
         assert!(
@@ -725,7 +747,7 @@ mod tests {
     #[test]
     fn default_config_has_pending_items() {
         let cfg = GatewayConfig::default();
-        let r = run_preflight(&cfg);
+        let r = run_preflight(&cfg, false);
         assert!(
             !r.ready,
             "默认占位配置不应判定为就绪（私钥/Host Key 必然未就绪）"
@@ -743,7 +765,7 @@ mod tests {
         empty.active_server_id = String::new();
 
         for cfg in [empty, GatewayConfig::default()] {
-            let r = run_preflight(&cfg);
+            let r = run_preflight(&cfg, false);
             for item in r
                 .items
                 .iter()
@@ -763,7 +785,7 @@ mod tests {
     #[test]
     fn item_keys_are_unique() {
         let cfg = GatewayConfig::default();
-        let r = run_preflight(&cfg);
+        let r = run_preflight(&cfg, false);
         let mut keys: Vec<&str> = r.items.iter().map(|i| i.key.as_str()).collect();
         let total = keys.len();
         keys.sort();
@@ -792,7 +814,7 @@ mod tests {
         cfgs.push(empty);
 
         for cfg in cfgs {
-            let r = run_preflight(&cfg);
+            let r = run_preflight(&cfg, false);
             for item in &r.items {
                 match item.fix {
                     FixKind::Guide => {
@@ -828,7 +850,7 @@ mod tests {
     #[test]
     fn hands_on_topics_are_covered_by_guides() {
         let cfg = GatewayConfig::default();
-        let r = run_preflight(&cfg);
+        let r = run_preflight(&cfg, false);
         for key in [
             "ssh_keygen",
             "push_pubkey",
@@ -868,7 +890,7 @@ mod tests {
     #[test]
     fn core_items_are_always_present() {
         let cfg = GatewayConfig::default();
-        let r = run_preflight(&cfg);
+        let r = run_preflight(&cfg, false);
         let keys: Vec<&str> = r.items.iter().map(|i| i.key.as_str()).collect();
 
         // 与「新建一台电脑能否跑通」强相关的项，任何环境下都必须在。
@@ -928,7 +950,7 @@ mod tests {
         cfg.servers.push(s);
         cfg.active_server_id = "t1".to_string();
 
-        let r = run_preflight(&cfg);
+        let r = run_preflight(&cfg, false);
         let item = r.items.iter().find(|i| i.key == "ssh_key").expect("应有私钥项");
         assert_eq!(item.status, PreflightStatus::Error);
         assert!(
@@ -950,7 +972,7 @@ mod tests {
         cfg.servers.push(s);
         cfg.active_server_id = "t2".to_string();
 
-        let r = run_preflight(&cfg);
+        let r = run_preflight(&cfg, false);
         let item = r.items.iter().find(|i| i.key == "ssh_key").expect("应有私钥项");
         assert_eq!(item.status, PreflightStatus::Error);
         assert!(!item.steps.is_empty(), "应给出生成私钥的步骤");
@@ -960,7 +982,7 @@ mod tests {
     #[test]
     fn counts_match_items() {
         let cfg = GatewayConfig::default();
-        let r = run_preflight(&cfg);
+        let r = run_preflight(&cfg, false);
         let passed = r.items.iter().filter(|i| i.status == PreflightStatus::Ok).count();
         assert_eq!(r.passed, passed);
         assert_eq!(r.ready, r.blocking_failed == 0);
@@ -978,11 +1000,87 @@ mod tests {
         assert!(port_available(port), "释放后应判定为可用");
     }
 
+    /// 隧道运行中，「自己的隧道占着端口」**不应**被判为阻塞项。
+    ///
+    /// 起因（用户实测）：首页显示「出口已验证 · 127.0.0.1:17801 端口监听正常」，
+    /// 同时环境自检报「127.0.0.1:17801 已被其他程序占用」—— 同一端口两个相反结论。
+    /// 根因：自检用「能否 bind」判断端口是否可用，而隧道运行中它自己的 ssh
+    /// 进程正监听着该端口，bind 必然失败。
+    #[test]
+    fn port_occupied_by_own_tunnel_is_not_blocking() {
+        let mut cfg = GatewayConfig::default();
+        // 真实占住一个端口，模拟隧道正在监听
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("应能绑定随机端口");
+        let busy = listener.local_addr().expect("应有本地地址").port();
+        cfg.settings.socks_port = busy;
+        cfg.settings.bridge_port = 0; // 跳过桥接端口检查，避免环境干扰
+
+        // ① 隧道未运行 → 端口被占用是**真问题**，应报阻塞
+        let idle = run_preflight(&cfg, false);
+        let item = idle
+            .items
+            .iter()
+            .find(|i| i.key == "socks_port")
+            .expect("应有 socks_port 项");
+        assert!(item.blocking, "隧道未运行时端口被占用应判为阻塞项");
+        assert!(
+            item.detail.contains("其他程序"),
+            "应说明是被其他程序占用，实际: {}",
+            item.detail
+        );
+
+        // ② 隧道运行中 → 占用者是自己的隧道，属正常
+        let active = run_preflight(&cfg, true);
+        let item = active
+            .items
+            .iter()
+            .find(|i| i.key == "socks_port")
+            .expect("应有 socks_port 项");
+        assert!(!item.blocking, "隧道运行中占用自己的端口不应是阻塞项");
+        assert!(
+            matches!(item.status, PreflightStatus::Ok),
+            "应判为通过，实际: {:?} / {}",
+            item.status,
+            item.detail
+        );
+        assert!(
+            item.detail.contains("隧道"),
+            "文案应说明是当前隧道在用，实际: {}",
+            item.detail
+        );
+
+        drop(listener);
+    }
+
+    /// 隧道运行中，桥接端口被自己的隧道占用时**不应**冒出阻塞项。
+    #[test]
+    fn bridge_port_occupied_by_own_tunnel_is_not_blocking() {
+        let mut cfg = GatewayConfig::default();
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("应能绑定随机端口");
+        let busy = listener.local_addr().expect("应有本地地址").port();
+        cfg.settings.socks_port = 0; // 跳过 SOCKS 端口检查
+        cfg.settings.bridge_port = busy;
+
+        let idle = run_preflight(&cfg, false);
+        assert!(
+            idle.items.iter().any(|i| i.key == "bridge_port" && i.blocking),
+            "隧道未运行时桥接端口被占用应报阻塞"
+        );
+
+        let active = run_preflight(&cfg, true);
+        assert!(
+            !active.items.iter().any(|i| i.key == "bridge_port"),
+            "隧道运行中桥接端口被自己占用不应出条目"
+        );
+
+        drop(listener);
+    }
+
     /// 所有项的 label 与 detail 都不应为空（UI 会直接渲染）。
     #[test]
     fn texts_are_non_empty() {
         let cfg = GatewayConfig::default();
-        let r = run_preflight(&cfg);
+        let r = run_preflight(&cfg, false);
         for i in &r.items {
             assert!(!i.key.is_empty(), "key 为空");
             assert!(!i.label.is_empty(), "label 为空: {}", i.key);

@@ -130,14 +130,27 @@ const grouped = computed(() => {
 });
 
 onMounted(async () => {
-  await initStore();
   // 供验证脚本判断「首屏初始化真的跑完了」。
   //
   // 用「固定 sleep」等 initStore 是脆的：机器慢一点就 go 早了，脚本会读到半空的
   // 页面，然后误报成「功能坏了」。这里留一个显式信号，脚本轮询它即可。
   // 生产构建里这只是一次无害的属性赋值，不泄露任何数据。
-  if (typeof window !== "undefined") {
-    (window as unknown as Record<string, unknown>).__lcfgReady = true;
+  //
+  // ⚠️ 放在 `finally` 里：这是「**可以开始断言了**」的信号，不是「初始化成功」
+  // 的信号。写在 `await initStore()` 之后的话，一旦 initStore 抛异常，信号就
+  // 永不置位，脚本只能白等满超时窗口再退回固定等待 —— 而那时脚本已经读不到
+  // 任何线索了。失败时更该置位，并把错误留在 `__lcfgInitError` 里供脚本打印。
+  try {
+    await initStore();
+  } catch (e) {
+    console.error("[app] initStore 失败", e);
+    if (typeof window !== "undefined") {
+      (window as unknown as Record<string, unknown>).__lcfgInitError = String(e);
+    }
+  } finally {
+    if (typeof window !== "undefined") {
+      (window as unknown as Record<string, unknown>).__lcfgReady = true;
+    }
   }
 });
 </script>

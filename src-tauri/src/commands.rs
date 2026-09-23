@@ -1246,8 +1246,14 @@ pub fn run_preflight(
     machine: State<'_, GatewayStateMachine>,
 ) -> crate::preflight::PreflightReport {
     let snap = machine.snapshot();
+    // 先取 state（Copy），再 move config 出来。
+    //
+    // 传 `tunnel_active` 是为了让自检区分「端口被自己的隧道占用」（正常）
+    // 与「被其他程序占用」（阻塞）—— 自检用「能否 bind」判断端口，
+    // 而隧道运行中它自己的 ssh 正监听着这两个端口，不加区分必然误报。
+    let tunnel_active = tunnel_is_active(snap.state);
     let cfg = snap.config.unwrap_or_default();
-    let report = crate::preflight::run_preflight(&cfg);
+    let report = crate::preflight::run_preflight(&cfg, tunnel_active);
     app_log(
         &app,
         &machine.inner,
