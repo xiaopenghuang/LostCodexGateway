@@ -28,6 +28,9 @@
 | 症状 | 处理 |
 |---|---|
 | 订阅更新后规则片段消失 | 你的 profile 链覆盖了片段文件；重新按 setup-windows.md 导入，或把片段放进你的 merge profile |
+| **开了 Clash 系统代理后，codex 一直重连、发不出请求** | 规则片段里的 `PROCESS-NAME,codex.exe,MY-VPS` 把 codex 的**每一个**连接都送进 `MY-VPS` 组，而它指向 `socks5://127.0.0.1:<本地 SOCKS 端口>`。网关未连接时该端口无人监听 → 每个连接被**立即拒绝** → codex 立刻重试 → 死循环。处理：① 连上网关（这是设计意图）；② 或在 Verge 里把 `MY-VPS` 切到 `DIRECT`；③ 或按下面一条改造规则 |
+| **不用网关时，codex 仍被劫持** | 只要规则片段还在启用链上，codex 的生死就绑在网关的在线状态上——此时「不连网关」比「不装本工具」更糟。建议把 `MY-VPS` 组由 `select` 改为 `fallback`，成员写成 `[lcfg-gateway, <你的机场组>]`：网关在线走网关，离线自动回落机场组。若不改，则不用网关时须手动把 `MY-VPS` 切走 |
+| 如何区分「机场节点挂了」与「被劫持到死端口」 | **节点不通 = 超时卡住**（慢，几十秒）；**本地端口无人监听 = 立即拒绝 + 立刻重试**（快）。后者可在 `%APPDATA%\io.github.clash-verge-rev.clash-verge-rev\logs\sidecar\sidecar_latest.log` 中看到 `dial MY-VPS (match ProcessName/codex.exe) ... connectex: No connection could be made because the target machine actively refused it` |
 | 回滚按钮报「目标文件在备份后被修改过」 | 这是安全设计：检测到用户改动，拒绝覆盖。人工比对备份与当前文件后处理 |
 | 检测显示 secret | 正常：应用只报告「有 secret」，不读取、不保存该值 |
 | Verge 未运行 | 检测如实报告；规则片段生成不依赖运行状态 |

@@ -1232,6 +1232,35 @@ pub fn set_autostart(enabled: bool) -> Result<String, String> {
     }
 }
 
+/// 环境自检（环境体检）：一键列出「还差哪一步」。
+///
+/// **只读**，不改配置、不装东西、不提权。每项都带 `fix` 字段告诉前端怎么处理：
+/// - `auto` → 界面内可直接跳转页面完成（`action` 给出目标页）
+/// - `guide` → 必须人工操作，`steps` 给出逐条步骤
+///
+/// 取配置用 `machine.snapshot()` 而非 `inner.lock().config`：自检内部会跑子进程
+/// （`ssh -V`、`tasklist`、TCP 连接），持锁跑会阻塞状态机并可能让界面卡住。
+#[tauri::command]
+pub fn run_preflight(
+    app: AppHandle,
+    machine: State<'_, GatewayStateMachine>,
+) -> crate::preflight::PreflightReport {
+    let snap = machine.snapshot();
+    let cfg = snap.config.unwrap_or_default();
+    let report = crate::preflight::run_preflight(&cfg);
+    app_log(
+        &app,
+        &machine.inner,
+        "info",
+        "preflight",
+        format!(
+            "环境自检完成：通过 {} 项，阻塞项 {}",
+            report.passed, report.blocking_failed
+        ),
+    );
+    report
+}
+
 #[tauri::command]
 pub async fn export_diagnostics(
     machine: State<'_, GatewayStateMachine>,

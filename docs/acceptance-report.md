@@ -582,6 +582,48 @@ dist/assets/index-Bb2FDCga.js   132.42 kB
 >
 > 新版本号在、旧版本号无，说明安装包元数据确实是 0.3.0，不是上一版残留。
 
+### 5.7.1 打包（0.4.0，环境自检）
+
+- 命令：`npm run tauri build`（`beforeBuildCommand` 自动跑 `npm run build`）
+- 结果：`Finished 1 bundle`，耗时 3m 59s（release 编译）
+- 产物：
+
+| 项 | 值 |
+|---|---|
+| 安装包 | `src-tauri/target/release/bundle/nsis/LostCodexGateway_0.4.0_x64-setup.exe` |
+| 安装包大小 | 3,102,098 字节 |
+| 安装包 SHA-256 | `56cad7face2fb430b9a87466d00ce646d411644e9e1a15b966306e34f43c270e` |
+| 主程序 | `src-tauri/target/release/lostcodexgateway.exe`（11,863,040 字节） |
+| 主程序 SHA-256 | `0093bb7cfb87547ea9b90caa2247a217806f4f2372b1429ec416bced807a50ae` |
+| 前端资源 | `index-Bzlsnv9z.js`（137.93 kB）/ `index-BEW_n_at.css`（21.92 kB） |
+
+**元数据核验**（UTF-16LE 解码，脚本已参数化支持任意版本号）：
+
+```
+$ python verify-installer-meta.py .../LostCodexGateway_0.4.0_x64-setup.exe 0.4.0
+  LostCodexGateway           2 次
+  0.4.0                      2 次
+  0.1.0 / 0.2.0 / 0.3.0      0 次
+结论：元数据校验通过
+```
+
+**内容核验**（在主程序二进制里搜特征串）：
+
+| 核验点 | 0.3.0 旧包 | 0.4.0 新包 | 判定 |
+|---|---|---|---|
+| `环境自检` | 0 | 1 | ✅ 新功能已进包 |
+| `ssh_keygen` / `push_pubkey` | 0 | 1 / 1 | ✅ 新 guide 项已进包 |
+| `codex_install` / `openssh_portable` | 0 | 1 / 1 | ✅ 4 个 guide 全覆盖 |
+| `便携 OpenSSH` | 0 | 1 | ✅ |
+| `__lcfgStore` / `__applyFixture` / `VITE_LCFG_FIXTURE` | — | 全 0 | ✅ 夹具零泄漏 |
+| 上一版前端资源名（`index-DxSUP0iI` 等） | — | 全 0 | ✅ 无旧前端残留 |
+
+**关于「主程序里搜不到 `0.4.0`」的说明**：这是**正确的**，不是缺陷。
+Tauri 应用的产品版本由 `tauri.conf.json` 提供，运行时经 `app.package_info()` 读取，
+**不硬编码进 Rust 代码**。所以版本号只出现在 NSIS 元数据里（已验 2 次）。
+主程序里唯一的 `0.3.0` 是 `config.rs:4` 的历史变更注释（`//! ## 多服务器（v0.3.0）`），
+其余形如 `0.4.4` / `0.5.1` 的均为第三方 crate 版本串，与本产品无关。
+
 ### 5.8 未验证（明确区分）
 
 以下**没有**验证，不得当作已通过：
@@ -591,7 +633,14 @@ dist/assets/index-Bb2FDCga.js   132.42 kB
   字体、缩放比、GPU 合成路径都不同。
 - ❌ **切换后旧 ssh 进程无残留**：逻辑上由 `generation` + `kill_process_by_pid`
   覆盖，但未在真机上 `tasklist` 核对过。
-- ❌ **安装包冒烟**：0.3.0 安装包**已产出**（见 §5.7），但**静默安装 / 卸载 / 启动未在本版重跑**。
-  0.1.0 做过这套冒烟（见 §4.2），本版缺这一步。原因是本次构建在沙箱内执行：
-  `reg.exe` 被安全策略拉黑（无法核对注册表卸载项），且安装动作会写入工作区之外的
-  `%LOCALAPPDATA%`。需在真实桌面会话中补跑，验收点同 §4.2 那张表。
+- ❌ **安装包冒烟**：0.3.0 与 0.4.0 安装包**均已产出**（见 §5.7 / §5.7.1），
+  但**静默安装 / 卸载 / 启动未重跑**。0.1.0 做过这套冒烟（见 §4.2），此后未补。
+  原因是构建在沙箱内执行：`reg.exe` 被安全策略拉黑（无法核对注册表卸载项），
+  且安装动作会写入工作区之外的 `%LOCALAPPDATA%`。需在真实桌面会话中补跑，
+  验收点同 §4.2 那张表。
+- ❌ **0.4.0 环境自检的端到端实测**：页面渲染由 headless Chrome + dev 夹具验证
+  （见 §5.9），**未**在真实 Tauri 窗口里跑一次 `run_preflight` 后端命令。
+  即「前端渲染路径」与「后端数据契约」各自验过，但**拼接处**未验。
+- ❌ **单实例互斥体测试在软件运行时会失败**：`acquire_returns_some_when_no_other_instance`
+  与真实 app 共用 `Local\LostCodexGateway` 互斥体，app 在跑时该测试必然失败。
+  这是**环境干扰**，非代码缺陷；跑全量测试前需先关闭应用。

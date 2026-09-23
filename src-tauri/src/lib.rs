@@ -7,6 +7,7 @@ pub mod config;
 pub mod diagnostics;
 pub mod launchers;
 pub mod mihomo;
+pub mod preflight;
 pub mod procutil;
 pub mod single_instance;
 pub mod ssh;
@@ -181,6 +182,7 @@ pub fn run() {
             commands::get_wsl_proxy_command,
             commands::get_autostart_status,
             commands::set_autostart,
+            commands::run_preflight,
         ])
         .run(tauri::generate_context!())
         .expect("error while running LostCodexGateway");

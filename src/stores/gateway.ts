@@ -5,6 +5,7 @@ import type {
   GatewaySnapshot, GatewayState, GatewayConfig, HostKeyInfo, SshEnv,
   LaunchPreview, LaunchResult, LogEntry, ServerLatency, ServerProfile,
 } from "../types";
+import type { PreflightReport } from "../types/preflight";
 
 export const store = reactive({
   snapshot: null as GatewaySnapshot | null,
@@ -17,6 +18,9 @@ export const store = reactive({
   logs: [] as LogEntry[],
   initError: null as string | null,
   inBrowser: false,
+  /** 最近一次环境自检结果（未跑过为 null） */
+  preflight: null as PreflightReport | null,
+  preflightBusy: false,
 });
 
 export async function initStore(): Promise<void> {
@@ -137,12 +141,43 @@ export async function exportDiagnostics(): Promise<string> {
   return invoke<string>("export_diagnostics");
 }
 
+/**
+ * 跑一次环境自检（环境体检）。只读，无副作用。
+ *
+ * 结果同时写入 `store.preflight`，供「首页」与「诊断」页共用同一份数据
+ * （避免同一份体检结论在不同页面显示不一致）。
+ */
+export async function runPreflight(): Promise<PreflightReport> {
+  store.preflightBusy = true;
+  try {
+    const report = await invoke<PreflightReport>("run_preflight");
+    store.preflight = report;
+    return report;
+  } finally {
+    store.preflightBusy = false;
+  }
+}
+
 export async function refreshSnapshot(): Promise<void> {
   try {
     store.snapshot = await invoke<GatewaySnapshot>("get_snapshot");
   } catch {
     /* ignore */
   }
+}
+
+/**
+ * dev-only：把 store 挂到 window，供无头浏览器实测脚本注入夹具数据。
+ *
+ * 为什么需要它：环境自检页的渲染逻辑（排序、按钮/步骤分流、「缺失项必须有出路」）
+ * 只有拿到一份**确定的报告**才能在真实 DOM 上断言。而 dev 浏览器里没有 Tauri
+ * 后端，`run_preflight` 必然失败——没有这个出口就只能读代码推断。
+ *
+ * `import.meta.env.DEV` 守卫 + 动态 import：生产构建整块被摇掉，
+ * 不会在发布产物里留下可被页面脚本篡改状态的入口。
+ */
+if (import.meta.env.DEV && typeof window !== "undefined") {
+  (window as unknown as Record<string, unknown>).__lcfgStore = store;
 }
 
 export const stateLabel = (s: GatewayState | undefined): string => {

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import Dashboard from "./pages/Dashboard.vue";
+import Doctor from "./pages/Doctor.vue";
 import Server from "./pages/Server.vue";
 import Apps from "./pages/Apps.vue";
 import NetworkDiag from "./pages/NetworkDiag.vue";
@@ -10,7 +11,15 @@ import Settings from "./pages/Settings.vue";
 import { store, initStore, stateLabel, stateKind } from "./stores/gateway";
 import { theme, toggleTheme } from "./stores/theme";
 
-type TabKey = "dashboard" | "server" | "apps" | "netdiag" | "wsl" | "diagnostics" | "settings";
+type TabKey =
+  | "dashboard"
+  | "doctor"
+  | "server"
+  | "apps"
+  | "netdiag"
+  | "wsl"
+  | "diagnostics"
+  | "settings";
 
 /**
  * 导航项。icon 是内联 SVG 的 path 数据（24x24 viewBox、stroke 绘制）。
@@ -23,6 +32,12 @@ const tabs: { key: TabKey; label: string; icon: string; group: string }[] = [
     label: "首页",
     group: "网关",
     icon: "M3 12l9-9 9 9M5 10v10h14V10",
+  },
+  {
+    key: "doctor",
+    label: "环境自检",
+    group: "网关",
+    icon: "M9 12l2 2 4-4M12 3l7 4v5c0 4.5-3 8-7 9-4-1-7-4.5-7-9V7z",
   },
   {
     key: "server",
@@ -116,6 +131,14 @@ const grouped = computed(() => {
 
 onMounted(async () => {
   await initStore();
+  // 供验证脚本判断「首屏初始化真的跑完了」。
+  //
+  // 用「固定 sleep」等 initStore 是脆的：机器慢一点就 go 早了，脚本会读到半空的
+  // 页面，然后误报成「功能坏了」。这里留一个显式信号，脚本轮询它即可。
+  // 生产构建里这只是一次无害的属性赋值，不泄露任何数据。
+  if (typeof window !== "undefined") {
+    (window as unknown as Record<string, unknown>).__lcfgReady = true;
+  }
 });
 </script>
 
@@ -183,6 +206,7 @@ onMounted(async () => {
     <div class="main">
       <main class="content">
         <Dashboard v-if="active === 'dashboard'" @go-server="active = 'server'" />
+        <Doctor v-else-if="active === 'doctor'" :go-tab="(k: string) => (active = k as TabKey)" />
         <Server v-else-if="active === 'server'" />
         <Apps v-else-if="active === 'apps'" />
         <NetworkDiag v-else-if="active === 'netdiag'" />

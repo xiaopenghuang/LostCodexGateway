@@ -8,7 +8,7 @@
 
 一键拉起 SSH SOCKS5 隧道，让被选中的客户端流量从你的服务器出去 —— 不转发、不解密、不改写模型 API。
 
-[![Release](https://img.shields.io/badge/release-v0.3.0-2ea44f?style=flat-square)](../../releases)
+[![Release](https://img.shields.io/badge/release-v0.4.0-2ea44f?style=flat-square)](../../releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078d4?style=flat-square)](#环境要求)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2.x-24c8db?style=flat-square)](https://tauri.app)
@@ -58,6 +58,7 @@ LostCodexGateway 把这些做成一个托盘常驻的小工具：填一次服务
 | 特性 | 说明 |
 |---|---|
 | **SSH SOCKS5 隧道** | 调用 Windows 自带 OpenSSH（`ssh.exe -D`），参数以数组传递，无 shell 字符串拼接，无注入面 |
+| **环境自检（环境体检）** | 一键检查跑通所需的全部前置条件（ssh.exe / 私钥 / 服务器连通性 / Host Key / 端口 / Codex CLI / Clash Verge）并给出处理路径。**能自动的直接跳转处理，不能自动的给编号步骤**。全程只读：不装东西、不改系统、不提权 |
 | **多服务器切换** | 保存任意多台服务器，一键切换当前出口。切换为硬切（断开→重连），失败不回滚但可一键切回上一个；本地端口全局固定，切换对 Codex CLI 透明 |
 | **延迟探测** | 对全部服务器并发做 TCP 探测，如实标注测的是「到 SSH 端口的往返」而非出口延迟 |
 | **Host Key 首次确认** | 查询服务器指纹供人工核对，确认后写入；**指纹变化则阻断连接**。写入前备份 `known_hosts` |
@@ -142,7 +143,9 @@ LostCodexGateway 把这些做成一个托盘常驻的小工具：填一次服务
 
 ## 快速开始
 
-1. **安装**：下载 `LostCodexGateway_0.3.0_x64-setup.exe` 并运行。普通用户权限即可，无需管理员。
+1. **安装**：下载 `LostCodexGateway_0.4.0_x64-setup.exe` 并运行。普通用户权限即可，无需管理员。
+   装好后建议先点左侧「**环境自检**」——它会逐项列出还差哪一步（OpenSSH / 私钥 / 服务器 / 指纹 / Codex），
+   能自动的给按钮，需要你动手的给可复制的步骤。
 2. **填服务器信息**：打开应用 →「服务器」页 →「新增服务器」→ 填写名称、主机地址、SSH 端口、用户名、私钥路径。
    可以保存多台，随时用「切换」按钮换当前出口（切换是硬切：先断开旧隧道再重连，进行中的请求会中断）。
    本地 SOCKS 端口（默认 `17801`）与桥接端口（默认 `17800`）是**全局设置**，在「设置」页修改。
