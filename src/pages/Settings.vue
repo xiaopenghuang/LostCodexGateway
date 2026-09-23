@@ -41,10 +41,11 @@ async function doSavePorts() {
   portErr.value = "";
   try {
     portMsg.value = await saveSettings({
-      socks_port: Number(socksPort.value),
-      bridge_port: Number(bridgePort.value),
-      auto_reconnect: autoReconnect.value,
-      max_reconnect_attempts: Number(maxAttempts.value),
+      // camelCase：Tauri 2 的参数映射约定，详见 stores/gateway.ts 的 saveSettings
+      socksPort: Number(socksPort.value),
+      bridgePort: Number(bridgePort.value),
+      autoReconnect: autoReconnect.value,
+      maxReconnectAttempts: Number(maxAttempts.value),
     });
   } catch (e) {
     portErr.value = String(e);

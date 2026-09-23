@@ -92,12 +92,20 @@ export async function testServers(): Promise<ServerLatency[]> {
   }
 }
 
-/** 保存全局设置（本地端口 + 重连策略）。隧道运行期间后端会拒绝改端口。 */
+/**
+ * 保存全局设置（本地端口 + 重连策略）。隧道运行期间后端会拒绝改端口。
+ *
+ * ⚠️ 参数名必须是 **camelCase**：Tauri 2 默认把 Rust 侧的 snake_case 参数名
+ * 转成 camelCase 后从前端入参里取。后端签名是 `socks_port`，但前端要传
+ * `socksPort` —— 写成 `socks_port` 会得到
+ * `invalid args ... missing required key socksPort`。
+ * 本仓库其他多词参数命令（`set_expected_egress_ip` 等）也是这个约定。
+ */
 export async function saveSettings(payload: {
-  socks_port: number;
-  bridge_port: number;
-  auto_reconnect: boolean;
-  max_reconnect_attempts: number;
+  socksPort: number;
+  bridgePort: number;
+  autoReconnect: boolean;
+  maxReconnectAttempts: number;
 }): Promise<string> {
   return invoke<string>("save_settings", payload);
 }

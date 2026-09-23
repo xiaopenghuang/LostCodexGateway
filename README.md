@@ -265,6 +265,10 @@ LostCodexGateway/
 1. `cargo test` 全部通过（沙箱环境下 `single_instance` 的个别用例可能因 `CreateMutexW` 受限而失败，需实机验证）。
 2. `cargo fmt` 与 `cargo clippy -- -D warnings` 无告警。
 3. 新增涉及路径 / 网络的代码时，请运行 `python scripts/privacy-scan.py` 确认未引入本机环境信息。
+4. **改动 `invoke` 调用或 `#[tauri::command]` 签名后，务必运行 `python scripts/check-ipc-args.py`。**
+   Tauri 2 把 Rust 的 snake_case 参数名转成 camelCase 传给前端，前端写错键名时
+   **前后端测试都抓不到**（两边都不走 IPC 序列化），只会在用户点按钮时报
+   `missing required key ...`。该脚本静态比对两侧参数名，退出码 1 表示不一致。
 
 ---
 

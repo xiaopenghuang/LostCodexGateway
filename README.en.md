@@ -260,6 +260,11 @@ Issues and PRs are welcome. Before submitting, please make sure:
 1. `cargo test` passes fully (in sandboxed environments a few `single_instance` cases may fail due to restricted `CreateMutexW`; those need verification on real hardware).
 2. `cargo fmt` and `cargo clippy -- -D warnings` are clean.
 3. When adding code that touches filesystem paths or networking, run `python scripts/privacy-scan.py` to confirm no host-specific environment information is introduced.
+4. **After changing any `invoke` call or `#[tauri::command]` signature, run `python scripts/check-ipc-args.py`.**
+   Tauri 2 converts Rust snake_case parameter names to camelCase for the frontend. A wrong
+   key name is **invisible to both test layers** (neither goes through IPC serialization) and
+   only surfaces when a user clicks the button — as `missing required key ...`. The script
+   statically compares both sides; exit code 1 means a mismatch.
 
 ---
 
