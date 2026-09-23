@@ -700,3 +700,118 @@ Tauri 应用的产品版本由 `tauri.conf.json` 提供，运行时经 `app.pack
 已加回归测试 `core_items_are_always_present` 钉住「核心集合 + 13–15 区间」，
 不再依赖人脑计数。单元测试 89 → 90。
 
+### 5.11 用户反馈驱动的修复（2026-09-23，未发版）
+
+两轮用户实测反馈，各修一个缺陷。**均已修复并推送，但尚未进入安装包。**
+
+#### 5.11.1 「保存端口设置」报 `missing required key socksPort`
+
+用户点设置页的「保存端口设置」，报：
+
+```
+invalid args `socksPort` for command `save_settings`:
+command save_settings missing required key socksPort
+```
+
+**根因**：Tauri 2 默认把 Rust 侧 snake_case 参数名转成 camelCase 后从前端入参取。
+后端签名是 `socks_port`，前端却传了 `socks_port` —— Tauri 找的是 `socksPort`。
+
+逐个核对全项目 12 个带参命令，**只有 `save_settings` 错**（其余如
+`set_expected_egress_ip` / `generate_mihomo_fragment` 前端都写的 camelCase）。
+
+**为什么测试没抓到 —— IPC 边界的盲区**：
+
+| 测试层 | 是否经过 IPC 序列化 |
+|---|---|
+| 前端（夹具替换了 `invoke`） | ❌ 否 |
+| 后端（直接调 Rust 函数） | ❌ 否 |
+
+两侧都不走序列化，参数名写错时**两边都「通过」**。这类错误只能静态扫源码发现。
+
+**新增卡口** `scripts/check-ipc-args.py`：静态比对前端 `invoke` 键名 vs 后端命令
+参数名（按 Tauri 规则转 camelCase），退出码 1 可用于 CI。支持对象字面量与
+「传变量 + 回溯类型注解」两种形态（后者正是本 bug 的形态）。
+
+**脚本有效性已实测**（非「看起来能跑」）：把 bug 注入回去 → 脚本精确报出
+`save_settings 缺少参数 ['socksPort', 'bridgePort']`；恢复后退出码 0。
+
+#### 5.11.2 「直连失败」红 ✗ 与「全部通过」徽标并存
+
+用户截图反馈：出口验证步骤里「本机对照出口 IP」是红色 ✗ + 「直连失败」，
+而徽标写着「全部通过」，问「这到底要不要紧」。
+
+排查出三个问题，**都不是用户环境的问题**：
+
+**① `direct_egress` 只试第一个端点（真 bug）**
+
+原实现取 `endpoints.first()`，失败即放弃。默认第一个端点是 `api.ipify.org`，
+实测本机对它 **DNS 能解析、TLS 握手被重置**，第二个端点 `ipinfo.io` 正常：
+
+```
+$ curl --noproxy '*' https://api.ipify.org?format=json
+HTTP=000 耗时=2.96s          ← 失败
+$ curl --noproxy '*' https://ipinfo.io/ip
+117.139.221.115  HTTP=200    ← 成功
+```
+
+`api.ipify.org` 的失败细节（`curl -v`）：
+
+```
+* Host api.ipify.org:443 was resolved.
+* Recv failure: Connection was reset
+* schannel: failed to receive handshake, SSL/TLS connection failed
+```
+
+即 DNS 通、TCP 建连后 TLS 被 RST —— 典型的网络中间设备干扰特征。
+
+对照步骤因此**永远失败**。而隧道侧是遍历所有端点的，两侧行为不一致。
+
+**修法**：改为**并发尝试所有端点、取第一个成功**。并发而非串行是为了控耗时 ——
+这一步在「连接」流程里是串行的（原注释「不能让连接卡 30 秒」就是这个顾虑），
+串行会让最坏耗时随端点数累加；并发后总耗时 ≈ 单个端点超时。
+
+**实测验证**（`cargo test --lib direct_egress_falls_back -- --ignored --nocapture`）：
+
+```
+修复前：失败
+修复后：direct_egress => ok=true detail=117.139.221.115   （耗时 0.46s）
+```
+
+不仅修好，还比原来快（不必干等第一个端点超时）。
+
+**② 参考项失败被渲染成错误视觉**
+
+`direct_ip` 不参与结论判定（`ok = listening && socks_ok && egress_ok`），
+但前端对所有步骤一律 `s.ok ? ✓ : ✗`，于是辅助步骤失败也标红，与徽标冲突。
+
+修法是把语义**显式化**而非在前端硬编码 kind 字符串：`VerifyStep` 新增
+`advisory: bool`（`serde(default)` 兼容旧快照），`direct_ip` 标为 true。
+前端据此用中性标记 `–` + 灰色 `.step-mark.info`，标签加「（参考项）」，
+底部解释「参考项不参与通过判定」。
+
+**③ 直连失败时把原因文案当成 IP 显示**
+
+`directIp` computed 原来无条件取 `direct_ip` 步骤的 `detail`，而失败时
+`detail` 是原因说明，于是整句文案被塞进「本机直连对照」那一格。
+改为只在 `ok === true` 时取，失败显示「未取得」。
+
+**真机 DOM 实测**（`.workbuddy-ai/shots/verify-steps.cjs`，3 场景全通过）：
+
+| 场景 | 徽标 | 直连步骤标记 | 对照格 |
+|---|---|---|---|
+| `verified` | 全部通过 | ✓（绿） | `198.51.100.22` |
+| `suspect` | 未通过 | ✓ | 显示「出口相同」警示 |
+| `direct_unavailable` | **全部通过** | **`–`（中性灰）** | **未取得** |
+
+截图：`.workbuddy-ai/shots/verify-steps-direct-unavailable.png`
+
+#### 5.11.3 状态
+
+| 项 | 值 |
+|---|---|
+| 提交 | `9b09d7d`（IPC 修复）、`80b45d3`（verify 修复） |
+| 单元测试 | 90 → 92（verify 新增 2 条 + 1 条 `--ignored` 网络测试） |
+| **是否已进安装包** | ❌ **否** —— 用户装的 0.4.0 仍带这两个缺陷 |
+
+**注**：这两处修复都在 `0.4.0` 发布之后，故 `v0.4.0` tag 与 Release 的内容
+**不包含**它们。若要交付给用户，需重新打包（建议 `0.4.1`）。
