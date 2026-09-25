@@ -8,7 +8,7 @@
 
 One click to bring up an SSH SOCKS5 tunnel so selected client traffic leaves from your server. No API forwarding, no decryption, no rewriting.
 
-[![Release](https://img.shields.io/badge/release-v0.4.3-2ea44f?style=flat-square)](../../releases)
+[![Release](https://img.shields.io/badge/release-v0.4.4-2ea44f?style=flat-square)](../../releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078d4?style=flat-square)](#requirements)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2.x-24c8db?style=flat-square)](https://tauri.app)
@@ -142,7 +142,7 @@ LostCodexGateway packages this into a small tray-resident utility: enter your se
 
 ## Quick Start
 
-1. **Install**: download `LostCodexGateway_0.4.3_x64-setup.exe` and run it. Standard user privileges are sufficient — no administrator needed.
+1. **Install**: download `LostCodexGateway_0.4.4_x64-setup.exe` and run it. Standard user privileges are sufficient — no administrator needed.
 2. **Enter server details**: open the app → "Server" page → "Add server" → fill in a name, host, SSH port, username and private key path. You can save several servers and switch the active egress at any time (switching is a hard cut: the old tunnel is torn down before the new one is built, so in-flight requests are interrupted). The local SOCKS port (default `17801`) and bridge port (default `17800`) are **global settings**, edited on the "Settings" page.
 3. **Verify the fingerprint**: click "Query server fingerprint" → **compare it with your server administrator** (or against a fingerprint you already know) → confirm with "I've verified it, write it".
 4. **Connect**: on the "Home" page click "Connect" → status becomes **Verified**, and the page shows the egress IP along with each verification step.
