@@ -275,6 +275,99 @@ pub fn kill_process_by_pid(pid: u32) -> bool {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 遗留隧道识别与清理
+//
+// 为什么需要：状态机是**内存态**，应用一重启就丢。任何「应用不在时留下的
+// ssh 进程」——被任务管理器强杀、崩溃、或覆盖安装时安装程序结束旧实例——
+// 都会变成应用看不见的**孤儿**：
+//
+//   - 端口一直被占，环境自检把它误报成「已被其他程序占用」（文案误导）；
+//   - 更严重：若 Clash 的 MY-VPS 指向该端口，流量会**静默地继续**从那台
+//     服务器出去，而界面上显示「未连接」——用户以为自己已经断了。
+//
+// `commands::disconnect_with` 救不了这种情况：它只认状态机里记录的那一个
+// PID，而重启后状态机是空的。所以必须在启动时主动扫一遍。
+// ---------------------------------------------------------------------------
+
+/// 判断一条 ssh 命令行是不是**本工具拉起的隧道**。
+///
+/// 判据取自 `build_args` 生成的参数组合：用户手敲 ssh 时几乎不可能同时用上
+/// `ExitOnForwardFailure` + `ServerAliveInterval=30` + `ServerAliveCountMax=3`
+/// + `BatchMode` + `StrictHostKeyChecking` + `ConnectTimeout=15` 这一整套，
+/// 再叠加「动态转发端口 == 本工具配置的 SOCKS 端口」，足以与本机其它 ssh 区分。
+///
+/// 用**逐 token 精确匹配**而非子串包含：`-N` 这类短参数若用 `contains`，
+/// 会在路径、用户名、备注等位置误命中。
+///
+/// **绝不使用 `taskkill /IM ssh.exe`** —— 只处理特征完全匹配的进程。
+pub fn is_own_tunnel_cmdline(cmdline: &str, socks_port: u16) -> bool {
+    if cmdline.trim().is_empty() {
+        return false;
+    }
+    let has_token = |t: &str| cmdline.split_whitespace().any(|x| x == t);
+    has_token("-N")
+        && has_token("-D")
+        && has_token(&format!("127.0.0.1:{}", socks_port))
+        && has_token("ExitOnForwardFailure=yes")
+        && has_token("ServerAliveInterval=30")
+        && has_token("ServerAliveCountMax=3")
+        && has_token("BatchMode=yes")
+        && has_token("StrictHostKeyChecking=yes")
+        && has_token("ConnectTimeout=15")
+}
+
+/// 列出本机全部 ssh.exe 进程的 (PID, 命令行)。
+///
+/// 用 PowerShell CIM：wmic 在新版 Windows 已弃用（同 `mihomo::from_running_process`
+/// 的处理）。命令里**只用单引号**，避免经 Rust 传参时被 Windows 的引号规则二次转义。
+///
+/// 输出格式：每个进程两行 —— 先 PID，再 CommandLine。命令行不含换行，
+/// 因此按两行一组配对是安全的（取不到 CommandLine 时该行为空行，配对仍成立）。
+fn list_ssh_processes() -> Vec<(u32, String)> {
+    const PS: &str = "Get-CimInstance Win32_Process \
+        | Where-Object { $_.Name -eq 'ssh.exe' } \
+        | ForEach-Object { $_.ProcessId; $_.CommandLine }";
+    let out = match std_cmd("powershell")
+        .args(["-NoProfile", "-Command", PS])
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return Vec::new(),
+    };
+    let text = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = text.lines().collect();
+    let mut result = Vec::new();
+    let mut i = 0;
+    while i + 1 < lines.len() {
+        if let Ok(pid) = lines[i].trim().parse::<u32>() {
+            result.push((pid, lines[i + 1].trim().to_string()));
+        }
+        i += 2;
+    }
+    result
+}
+
+/// 找出本工具**遗留**的隧道进程 PID。**只读**，不终止任何进程。
+pub fn find_stale_tunnel_pids(socks_port: u16) -> Vec<u32> {
+    list_ssh_processes()
+        .into_iter()
+        .filter(|(_, cmd)| is_own_tunnel_cmdline(cmd, socks_port))
+        .map(|(pid, _)| pid)
+        .collect()
+}
+
+/// 终止本工具遗留的隧道进程，返回**实际被终止**的 PID。
+///
+/// 每个 PID 仍要过一遍 `kill_process_by_pid` 的二次校验（该 PID 此刻仍是
+/// ssh.exe）才会动手 —— 延续「只清理本工具创建的进程」这条原则。
+pub fn kill_stale_tunnels(socks_port: u16) -> Vec<u32> {
+    find_stale_tunnel_pids(socks_port)
+        .into_iter()
+        .filter(|pid| kill_process_by_pid(*pid))
+        .collect()
+}
+
 /// 等待进程退出（异步，供状态机收尾）。
 pub async fn wait_tunnel(tp: &mut TunnelProcess) {
     let _ = tp.child.wait().await;
@@ -593,5 +686,67 @@ mod tests {
             "SHA256:ZkAslGjFiUHdGf/WUL8rQvkib4PTvQatUV0OUQSncCA"
         );
         assert_eq!(base64_decode("!!!invalid"), None);
+    }
+
+    // ---- 遗留隧道识别（启动时自扫用）----------------------------------------
+
+    /// 还原一条本工具拉起的隧道命令行（形态与 `build_args` 实际产出一致）。
+    fn own_cmdline(socks_port: u16) -> String {
+        let mut cfg = ServerProfile::default();
+        cfg.host = "vps.example.com".into();
+        cfg.username = "ubuntu".into();
+        cfg.port = 64824;
+        cfg.key_path = r"C:\Users\me\.ssh\id_ed25519".into();
+        format!(
+            r"C:\Windows\System32\OpenSSH\ssh.exe {}",
+            build_args(&cfg, socks_port).join(" ")
+        )
+    }
+
+    #[test]
+    fn recognizes_own_tunnel_cmdline() {
+        let port = 17801;
+        assert!(
+            is_own_tunnel_cmdline(&own_cmdline(port), port),
+            "完整的本工具隧道命令行应被认出来"
+        );
+    }
+
+    /// 端口对不上 → 不认（用户改过 SOCKS 端口，或这是别的工具的隧道）。
+    #[test]
+    fn rejects_wrong_port() {
+        let cmd = own_cmdline(17801);
+        assert!(!is_own_tunnel_cmdline(&cmd, 17811));
+    }
+
+    /// 用户手敲的 `ssh -D`：端口相同，但没有那一整套 `-o` 参数 → **不认**，
+    /// 绝不误杀用户自己的 ssh。
+    #[test]
+    fn rejects_plain_user_ssh() {
+        let cmd = r"C:\Windows\System32\OpenSSH\ssh.exe -N -D 127.0.0.1:17801 me@example.com";
+        assert!(!is_own_tunnel_cmdline(cmd, 17801));
+    }
+
+    /// 任一特征参数缺失就不认（此处抽掉 ExitOnForwardFailure）。
+    #[test]
+    fn rejects_when_any_marker_missing() {
+        let port = 17801;
+        let cmd = own_cmdline(port).replace("ExitOnForwardFailure=yes", "Foo=bar");
+        assert!(!is_own_tunnel_cmdline(&cmd, port));
+    }
+
+    /// 取不到 CommandLine（空/空白）→ 不认。这是最危险的输入，必须安全侧失败。
+    #[test]
+    fn rejects_empty_cmdline() {
+        assert!(!is_own_tunnel_cmdline("", 17801));
+        assert!(!is_own_tunnel_cmdline("   ", 17801));
+    }
+
+    /// 回归：必须**逐 token 匹配**而非子串包含。
+    /// 路径里含 `-N` 字样，但参数并非本工具那一套 —— 不能因此误判。
+    #[test]
+    fn token_match_not_substring() {
+        let cmd = r"C:\tools\-N-stuff\ssh.exe -D 127.0.0.1:17801 me@example.com";
+        assert!(!is_own_tunnel_cmdline(cmd, 17801));
     }
 }

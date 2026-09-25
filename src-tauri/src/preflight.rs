@@ -360,17 +360,45 @@ pub fn run_preflight(cfg: &GatewayConfig, tunnel_active: bool) -> PreflightRepor
             format!("127.0.0.1:{} 正由当前隧道使用（已连接，属正常）", socks_port),
         ));
     } else {
-        items.push(PreflightItem::blocking_error(
-            "socks_port",
-            "本地 SOCKS 端口",
-            format!("127.0.0.1:{} 已被其他程序占用", socks_port),
-            FixKind::Auto,
-            Some("open_settings_page"),
-            vec![
-                "到「设置」页把「本地 SOCKS 端口」改成其他值（如 17811）".to_string(),
-                "若该端口是本工具上次异常退出残留的隧道，可先确认没有遗留 ssh.exe 进程".to_string(),
-            ],
-        ));
+        // 端口被占，且本工具没有活跃隧道。占用者有两种可能，文案必须分开 ——
+        // 说「已被其他程序占用」在第二种情况下是**误导**：
+        //   ① 本工具上次遗留的 ssh（强杀 / 崩溃 / 覆盖安装留下的孤儿）；
+        //   ② 真正的其他程序。
+        // 用与启动自扫相同的命令行特征判据来区分，避免把「自己的残留」
+        // 说成「别人的程序」，让用户去别处找原因。
+        let stale = ssh::find_stale_tunnel_pids(socks_port);
+        if let Some(pid) = stale.first() {
+            items.push(PreflightItem::blocking_error(
+                "socks_port",
+                "本地 SOCKS 端口",
+                format!(
+                    "127.0.0.1:{} 被本工具上次遗留的 ssh 进程占用（PID {}）",
+                    socks_port, pid
+                ),
+                FixKind::Auto,
+                Some("open_settings_page"),
+                vec![
+                    "重新启动本工具会自动清理该遗留进程（启动自扫）".to_string(),
+                    format!(
+                        "或手动结束它：任务管理器 → 详细信息 → 找到 PID {} 的 ssh.exe → 结束任务",
+                        pid
+                    ),
+                    "也可以到「设置」页把「本地 SOCKS 端口」改成其他值（如 17811）".to_string(),
+                ],
+            ));
+        } else {
+            items.push(PreflightItem::blocking_error(
+                "socks_port",
+                "本地 SOCKS 端口",
+                format!("127.0.0.1:{} 已被其他程序占用", socks_port),
+                FixKind::Auto,
+                Some("open_settings_page"),
+                vec![
+                    "到「设置」页把「本地 SOCKS 端口」改成其他值（如 17811）".to_string(),
+                    "若该端口是本工具上次异常退出残留的隧道，可先确认没有遗留 ssh.exe 进程".to_string(),
+                ],
+            ));
+        }
     }
     // 桥接端口：仅在「有问题」时出条目（隧道自己占着不算问题）。
     if bridge_port != 0 && !port_available(bridge_port) && !tunnel_active {

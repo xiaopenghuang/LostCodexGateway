@@ -124,6 +124,15 @@ pub fn run() {
                     let _ = w.hide();
                 }
             }
+
+            // 清理上次遗留的 ssh 隧道（强杀 / 崩溃 / 覆盖安装会留下孤儿）。
+            // 放 setup 末尾：不阻塞窗口显示，扫描本身在阻塞线程池里跑。
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    commands::cleanup_stale_tunnels(&handle).await;
+                });
+            }
             Ok(())
         })
         .on_window_event(|window, event| {

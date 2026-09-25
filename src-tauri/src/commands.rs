@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 const SNAPSHOT_EVENT: &str = "gateway://snapshot";
 const LOG_EVENT: &str = "gateway://log";
@@ -1024,6 +1024,45 @@ async fn disconnect_with(
     emit_snapshot(app, machine);
     app_log(app, machine, "info", "ssh", "已断开（仅停止本工具创建的 SSH 进程）");
     Ok("已断开".to_string())
+}
+
+/// 启动时清理**上次遗留**的 ssh 隧道进程。
+///
+/// 为什么需要：状态机是内存态，应用一重启就丢。被任务管理器强杀、崩溃、
+/// 或覆盖安装（安装程序结束旧实例）留下的 ssh 都会成为应用**看不见的孤儿**：
+///
+/// - 端口一直被占，环境自检把它误报成「已被其他程序占用」；
+/// - 更严重：若 Clash 的 `MY-VPS` 指向该端口，流量会**静默地继续**从那台
+///   服务器出去，而界面上显示「未连接」——用户以为自己早就断了。
+///
+/// 断开逻辑救不了它（只认状态机里记的那个 PID，重启后为空），
+/// 所以必须在启动时主动扫一遍。
+///
+/// 识别特征见 `ssh::is_own_tunnel_cmdline`：只处理参数组合完全匹配本工具的
+/// 进程，**绝不 `taskkill /IM ssh.exe`**。清理失败不影响启动（尽力而为）。
+pub async fn cleanup_stale_tunnels(app: &AppHandle) {
+    let machine = app.state::<GatewayStateMachine>();
+    let socks_port = machine.inner.lock().config.socks_port();
+    let inner = machine.inner.clone();
+    // PowerShell 调用是阻塞的，挪到阻塞线程池，别占住 async 运行时。
+    let killed = tauri::async_runtime::spawn_blocking(move || ssh::kill_stale_tunnels(socks_port))
+        .await
+        .unwrap_or_default();
+    if killed.is_empty() {
+        return;
+    }
+    let list = killed
+        .iter()
+        .map(|p| p.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    app_log(
+        app,
+        &inner,
+        "warn",
+        "ssh",
+        format!("已清理上次遗留的隧道进程（PID: {}）", list),
+    );
 }
 
 #[tauri::command]
